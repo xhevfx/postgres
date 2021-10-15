@@ -548,6 +548,7 @@ CopyFrom(CopyFromState cstate)
 	bool		has_before_insert_row_trig;
 	bool		has_instead_insert_row_trig;
 	bool		leafpart_use_multi_insert = false;
+	bool		break_var = false;
 
 	Assert(cstate->rel);
 	Assert(list_length(cstate->range_table) == 1);
@@ -858,13 +859,18 @@ CopyFrom(CopyFromState cstate)
 		PG_TRY();
 		{
 		if (!NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull))
-			break;
+			break_var = true;
 		}
 		PG_CATCH();
 		{
-
+			ereport(ERROR,
+					(errcode(ERRCODE_BAD_COPY_FILE_FORMAT),
+					 errmsg("AAAAAAAAAAAAAAAAAAA")));
 		}
 		PG_END_TRY();
+
+		if (break_var)
+			break;
 
 		/* Directly store the values/nulls array in the slot */
 		// if (!NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull))
