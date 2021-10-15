@@ -19,6 +19,9 @@
 #include "parser/parse_node.h"
 #include "tcop/dest.h"
 
+/* User-settable GUC parameters */
+extern PGDLLIMPORT int replay_buffer_size;
+
 /*
  * Represents whether a header line should be present, and whether it must
  * match the actual names (which implies "true").
@@ -42,6 +45,7 @@ typedef struct CopyFormatOptions
 								 * -1 if not specified */
 	bool		binary;			/* binary format? */
 	bool		freeze;			/* freeze rows on loading? */
+	bool		ignore_errors;  /* ignore rows with errors */
 	bool		csv_mode;		/* Comma Separated Value format? */
 	CopyHeaderChoice header_line;	/* header line? */
 	char	   *null_print;		/* NULL marker string (server encoding!) */
@@ -78,6 +82,8 @@ extern CopyFromState BeginCopyFrom(ParseState *pstate, Relation rel, Node *where
 extern void EndCopyFrom(CopyFromState cstate);
 extern bool NextCopyFrom(CopyFromState cstate, ExprContext *econtext,
 						 Datum *values, bool *nulls);
+extern bool safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext,
+							 Datum *values, bool *nulls);
 extern bool NextCopyFromRawFields(CopyFromState cstate,
 								  char ***fields, int *nfields);
 extern void CopyFromErrorCallback(void *arg);

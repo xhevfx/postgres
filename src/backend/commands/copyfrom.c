@@ -73,6 +73,11 @@
 /* Trim the list of buffers back down to this number after flushing */
 #define MAX_PARTITION_BUFFERS	32
 
+/*
+ * GUC parameters
+ */
+int		replay_buffer_size;
+
 /* Stores multi-insert data related to a single relation in CopyFrom. */
 typedef struct CopyMultiInsertBuffer
 {
@@ -100,11 +105,12 @@ typedef struct CopyMultiInsertInfo
 	int			ti_options;		/* table insert options */
 } CopyMultiInsertInfo;
 
-
 /* non-export function prototypes */
 static char *limit_printout_length(const char *str);
 
 static void ClosePipeFromProgram(CopyFromState cstate);
+
+static void safeExecConstraints(CopyFromState cstate, ResultRelInfo *resultRelInfo, TupleTableSlot *myslot, EState *estate);
 
 /*
  * error context callback for COPY FROM
@@ -522,6 +528,61 @@ CopyMultiInsertInfoStore(CopyMultiInsertInfo *miinfo, ResultRelInfo *rri,
 }
 
 /*
+ * Ignore constraints if IGNORE_ERRORS is enabled
+ */
+static void
+safeExecConstraints(CopyFromState cstate, ResultRelInfo *resultRelInfo, TupleTableSlot *myslot, EState *estate)
+{
+	SafeCopyFromState *safecstate = cstate->safecstate;
+
+	safecstate->skip_row = false;
+
+	PG_TRY();
+		ExecConstraints(resultRelInfo, myslot, estate);
+	PG_CATCH();
+	{
+		ErrorData *errdata;
+		MemoryContext cxt;
+
+		cxt = MemoryContextSwitchTo(safecstate->oldcontext);
+		errdata = CopyErrorData();
+
+		RollbackAndReleaseCurrentSubTransaction();
+		CurrentResourceOwner = safecstate->oldowner;
+
+		switch (errdata->sqlerrcode)
+		{
+			/* Ignore Constraint Violation */
+			case ERRCODE_INTEGRITY_CONSTRAINT_VIOLATION:
+			case ERRCODE_RESTRICT_VIOLATION:
+			case ERRCODE_NOT_NULL_VIOLATION:
+			case ERRCODE_FOREIGN_KEY_VIOLATION:
+			case ERRCODE_UNIQUE_VIOLATION:
+			case ERRCODE_CHECK_VIOLATION:
+			case ERRCODE_EXCLUSION_VIOLATION:
+				safecstate->errors++;
+				if (cstate->safecstate->errors <= 100)
+					ereport(WARNING,
+							(errcode(errdata->sqlerrcode),
+							errmsg("%s", errdata->context)));
+
+				safecstate->begin_subtransaction = true;
+				safecstate->skip_row = true;
+				break;
+			default:
+				PG_RE_THROW();
+		}
+
+		FlushErrorState();
+		FreeErrorData(errdata);
+		errdata = NULL;
+
+		MemoryContextSwitchTo(cxt);
+	}
+	PG_END_TRY();
+}
+
+/*
  * Copy FROM file to relation.
  */
 uint64
@@ -535,6 +596,7 @@ CopyFrom(CopyFromState cstate)
 	ExprContext *econtext;
 	TupleTableSlot *singleslot = NULL;
 	MemoryContext oldcontext = CurrentMemoryContext;
+	ResourceOwner oldowner = CurrentResourceOwner;
 
 	PartitionTupleRouting *proute = NULL;
 	ErrorContextCallback errcallback;
@@ -819,9 +881,30 @@ CopyFrom(CopyFromState cstate)
 	errcallback.previous = error_context_stack;
 	error_context_stack = &errcallback;
 
+	/* Initialize safeCopyFromState for IGNORE_ERRORS option */
+	if (cstate->opts.ignore_errors)
+	{
+		cstate->safecstate = palloc(sizeof(SafeCopyFromState));
+
+		/* Create replay_buffer in oldcontext */
+		cstate->safecstate->replay_buffer = (HeapTuple *) palloc(replay_buffer_size * sizeof(HeapTuple));
+
+		cstate->safecstate->saved_tuples = 0;
+		cstate->safecstate->replayed_tuples = 0;
+		cstate->safecstate->errors = 0;
+		cstate->safecstate->replay_is_active = false;
+		cstate->safecstate->begin_subtransaction = true;
+		cstate->safecstate->processed_remaining_tuples = false;
+
+		cstate->safecstate->oldowner = oldowner;
+		cstate->safecstate->oldcontext = oldcontext;
+		cstate->safecstate->insertMethod = insertMethod;
+	}
+
 	for (;;)
 	{
 		TupleTableSlot *myslot;
+		bool		valid_row;
 		bool		skip_tuple;
 
 		CHECK_FOR_INTERRUPTS();
@@ -855,8 +938,21 @@ CopyFrom(CopyFromState cstate)
 
 		ExecClearTuple(myslot);
 
-		/* Directly store the values/nulls array in the slot */
-		if (!NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull))
+		/*
+		 * NextCopyFrom() directly store the values/nulls array in the slot.
+		 * safeNextCopyFrom() ignores rows with errors if IGNORE_ERRORS is enabled.
+		 */
+		if (!cstate->safecstate)
+			valid_row = NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull);
+		else
+		{
+			valid_row = safeNextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull);
+
+			if (cstate->safecstate->skip_row)
+				continue;
+		}
+
+		if (!valid_row)
 			break;
 
 		ExecStoreVirtualTuple(myslot);
@@ -1035,7 +1131,17 @@ CopyFrom(CopyFromState cstate)
 				 */
 				if (resultRelInfo->ri_FdwRoutine == NULL &&
 					resultRelInfo->ri_RelationDesc->rd_att->constr)
-					ExecConstraints(resultRelInfo, myslot, estate);
+				{
+					if (cstate->opts.ignore_errors)
+					{
+						safeExecConstraints(cstate, resultRelInfo, myslot, estate);
+
+						if (cstate->safecstate->skip_row)
+							continue;
+					}
+					else
+						ExecConstraints(resultRelInfo, myslot, estate);
+				}
 
 				/*
 				 * Also check the tuple against the partition constraint, if

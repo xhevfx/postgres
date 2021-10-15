@@ -1027,6 +1027,175 @@ NextCopyFrom(CopyFromState cstate, ExprContext *econtext,
 }
 
 /*
+ * Analog of NextCopyFrom() but skips rows with errors while copying.
+ */
+bool
+safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext, Datum *values, bool *nulls)
+{
+	SafeCopyFromState *safecstate = cstate->safecstate;
+	bool valid_row = true;
+
+	safecstate->skip_row = false;
+
+	PG_TRY();
+	{
+		if (!safecstate->replay_is_active)
+		{
+			if (safecstate->begin_subtransaction)
+			{
+				BeginInternalSubTransaction(NULL);
+				CurrentResourceOwner = safecstate->oldowner;
+
+				safecstate->begin_subtransaction = false;
+			}
+
+			if (safecstate->saved_tuples < replay_buffer_size)
+			{
+				valid_row = NextCopyFrom(cstate, econtext, values, nulls);
+				if (valid_row)
+				{
+					/* Fill replay_buffer in CopyFrom() oldcontext */
+					MemoryContext cxt = MemoryContextSwitchTo(safecstate->oldcontext);
+
+					safecstate->replay_buffer[safecstate->saved_tuples++] = heap_form_tuple(RelationGetDescr(cstate->rel), values, nulls);
+					MemoryContextSwitchTo(cxt);
+
+					safecstate->skip_row = true;
+				}
+				else if (!safecstate->processed_remaining_tuples)
+				{
+					ReleaseCurrentSubTransaction();
+					CurrentResourceOwner = safecstate->oldowner;
+
+					if (safecstate->replayed_tuples < safecstate->saved_tuples)
+					{
+						/* Prepare to replay remaining tuples if they exist */
+						safecstate->replay_is_active = true;
+						safecstate->processed_remaining_tuples = true;
+						safecstate->skip_row = true;
+						return true;
+					}
+				}
+			}
+			else
+			{
+				/* Buffer was filled, commit subtransaction and prepare to replay */
+				ReleaseCurrentSubTransaction();
+				CurrentResourceOwner = safecstate->oldowner;
+
+				safecstate->replay_is_active = true;
+				safecstate->begin_subtransaction = true;
+				safecstate->skip_row = true;
+			}
+		}
+		else
+		{
+			if (safecstate->replayed_tuples < safecstate->saved_tuples)
+				/* Replaying tuple */
+				heap_deform_tuple(safecstate->replay_buffer[safecstate->replayed_tuples++], RelationGetDescr(cstate->rel), values, nulls);
+			else
+			{
+				/* Clean up replay_buffer */
+				MemSet(safecstate->replay_buffer, 0, replay_buffer_size * sizeof(HeapTuple));
+				safecstate->saved_tuples = safecstate->replayed_tuples = 0;
+
+				safecstate->replay_is_active = false;
+				safecstate->skip_row = true;
+			}
+		}
+	}
+	PG_CATCH();
+	{
+		ErrorData *errdata;
+		MemoryContext cxt;
+
+		cxt = MemoryContextSwitchTo(safecstate->oldcontext);
+		errdata = CopyErrorData();
+
+		RollbackAndReleaseCurrentSubTransaction();
+		CurrentResourceOwner = safecstate->oldowner;
+
+		switch (errdata->sqlerrcode)
+		{
+			/* Ignore malformed data */
+			case ERRCODE_DATA_EXCEPTION:
+			case ERRCODE_ARRAY_ELEMENT_ERROR:
+			case ERRCODE_DATETIME_VALUE_OUT_OF_RANGE:
+			case ERRCODE_INTERVAL_FIELD_OVERFLOW:
+			case ERRCODE_INVALID_CHARACTER_VALUE_FOR_CAST:
+			case ERRCODE_INVALID_DATETIME_FORMAT:
+			case ERRCODE_INVALID_ESCAPE_CHARACTER:
+			case ERRCODE_INVALID_ESCAPE_SEQUENCE:
+			case ERRCODE_NONSTANDARD_USE_OF_ESCAPE_CHARACTER:
+			case ERRCODE_INVALID_PARAMETER_VALUE:
+			case ERRCODE_INVALID_TABLESAMPLE_ARGUMENT:
+			case ERRCODE_INVALID_TIME_ZONE_DISPLACEMENT_VALUE:
+			case ERRCODE_NULL_VALUE_NOT_ALLOWED:
+			case ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE:
+			case ERRCODE_SEQUENCE_GENERATOR_LIMIT_EXCEEDED:
+			case ERRCODE_STRING_DATA_LENGTH_MISMATCH:
+			case ERRCODE_STRING_DATA_RIGHT_TRUNCATION:
+			case ERRCODE_INVALID_TEXT_REPRESENTATION:
+			case ERRCODE_INVALID_BINARY_REPRESENTATION:
+			case ERRCODE_BAD_COPY_FILE_FORMAT:
+			case ERRCODE_UNTRANSLATABLE_CHARACTER:
+			case ERRCODE_DUPLICATE_JSON_OBJECT_KEY_VALUE:
+			case ERRCODE_INVALID_ARGUMENT_FOR_SQL_JSON_DATETIME_FUNCTION:
+			case ERRCODE_INVALID_JSON_TEXT:
+			case ERRCODE_INVALID_SQL_JSON_SUBSCRIPT:
+			case ERRCODE_MORE_THAN_ONE_SQL_JSON_ITEM:
+			case ERRCODE_NO_SQL_JSON_ITEM:
+			case ERRCODE_NON_NUMERIC_SQL_JSON_ITEM:
+			case ERRCODE_NON_UNIQUE_KEYS_IN_A_JSON_OBJECT:
+			case ERRCODE_SINGLETON_SQL_JSON_ITEM_REQUIRED:
+			case ERRCODE_SQL_JSON_ARRAY_NOT_FOUND:
+			case ERRCODE_SQL_JSON_MEMBER_NOT_FOUND:
+			case ERRCODE_SQL_JSON_NUMBER_NOT_FOUND:
+			case ERRCODE_SQL_JSON_OBJECT_NOT_FOUND:
+			case ERRCODE_TOO_MANY_JSON_ARRAY_ELEMENTS:
+			case ERRCODE_TOO_MANY_JSON_OBJECT_MEMBERS:
+			case ERRCODE_SQL_JSON_SCALAR_REQUIRED:
+			case ERRCODE_SQL_JSON_ITEM_CANNOT_BE_CAST_TO_TARGET_TYPE:
+				safecstate->errors++;
+				if (safecstate->errors <= 100)
+					ereport(WARNING,
+							(errcode(errdata->sqlerrcode),
+							errmsg("%s", errdata->context)));
+
+				safecstate->begin_subtransaction = true;
+				safecstate->skip_row = true;
+				break;
+			default:
+				PG_RE_THROW();
+		}
+
+		FlushErrorState();
+		FreeErrorData(errdata);
+		errdata = NULL;
+
+		MemoryContextSwitchTo(cxt);
+	}
+	PG_END_TRY();
+
+	if (!valid_row)
+	{
+		if (safecstate->errors == 0)
+			ereport(NOTICE,
+					errmsg("FIND %d ERRORS", safecstate->errors));
+		else if (safecstate->errors == 1)
+			ereport(WARNING,
+					errmsg("FIND %d ERROR", safecstate->errors));
+		else
+			ereport(WARNING,
+					errmsg("FIND %d ERRORS", safecstate->errors));
+
+		return false;
+	}
+
+	return true;
+}
+
+/*
  * Read the next input line and stash it in line_buf.
  *
  * Result is true if read was terminated by EOF, false if terminated

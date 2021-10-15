@@ -49,6 +49,7 @@
 #include "catalog/pg_parameter_acl.h"
 #include "catalog/storage.h"
 #include "commands/async.h"
+#include "commands/copy.h"
 #include "commands/prepare.h"
 #include "commands/tablespace.h"
 #include "commands/trigger.h"
@@ -2524,6 +2525,16 @@ static struct config_int ConfigureNamesInt[] =
 		},
 		&logical_decoding_work_mem,
 		65536, 64, MAX_KILOBYTES,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"replay_buffer_size", PGC_USERSET, RESOURCES_MEM,
+			gettext_noop("Sets the size of replay buffer for COPY FROM IGNORE_ERRORS option"),
+			NULL
+		},
+		&replay_buffer_size,
+		1000, 1, INT_MAX,
 		NULL, NULL, NULL
 	},
 

@@ -1961,6 +1961,22 @@ include_dir 'conf.d'
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-logical-decoding-work-mem" xreflabel="replay_buffer_size">
+      <term><varname>replay_buffer_size</varname> (<type>integer</type>)
+      <indexterm>
+       <primary><varname>replay_buffer_size</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Specifies the size of buffer for COPY FROM IGNORE_ERRORS option. This buffer
+        is created when subtransaction begins and accumulates tuples until an error
+        occurs. Then it starts replaying stored tuples. The buffer size is the size
+        of a subtransaction block.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-max-stack-depth" xreflabel="max_stack_depth">
       <term><varname>max_stack_depth</varname> (<type>integer</type>)
       <indexterm>

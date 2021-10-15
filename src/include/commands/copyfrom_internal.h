@@ -16,6 +16,7 @@
 
 #include "commands/copy.h"
 #include "commands/trigger.h"
+#include "utils/resowner.h"
 
 /*
  * Represents the different source cases we need to worry about at
@@ -49,6 +50,23 @@ typedef enum CopyInsertMethod
 	CIM_MULTI_CONDITIONAL		/* use table_multi_insert only if valid */
 } CopyInsertMethod;
 
+ /* Struct that holding fields for COPY FROM IGNORE_ERRORS option. */
+typedef struct SafeCopyFromState
+{
+	HeapTuple	   *replay_buffer;		/* accumulates tuples for replaying them after an error */
+	int				saved_tuples;		/* # of tuples in replay_buffer */
+	int 			replayed_tuples;	/* # of tuples was replayed from buffer */
+	int				errors;				/* total # of errors */
+	bool			replay_is_active;	/* become active after an error */
+	bool			begin_subtransaction; /* if it's true, we can start subtransaction */
+	bool			processed_remaining_tuples;	/* for case of replaying last tuples */
+	bool			skip_row; 			/* if it's true, we should skip this row */
+
+	MemoryContext	oldcontext;			/* create repay_buffer in CopyFrom() context */
+	ResourceOwner	oldowner;			/* CopyFrom() resource owner */
+	CopyInsertMethod insertMethod;
+} SafeCopyFromState;
+
 /*
  * This struct contains all the state variables used throughout a COPY FROM
  * operation.
@@ -71,6 +89,7 @@ typedef struct CopyFromStateData
 	char	   *filename;		/* filename, or NULL for STDIN */
 	bool		is_program;		/* is 'filename' a program to popen? */
 	copy_data_source_cb data_source_cb; /* function for reading data */
+	SafeCopyFromState *safecstate; /* struct for ignore_errors option */
 
 	CopyFormatOptions opts;
 	bool	   *convert_select_flags;	/* per-column CSV/TEXT CS flags */
