@@ -107,6 +107,15 @@ static char *limit_printout_length(const char *str);
 
 static void ClosePipeFromProgram(CopyFromState cstate);
 
+/* functions for ignore_errros */
+
+static bool safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext,
+							 Datum *values, bool *nulls);
+
+static void safeExecConstraints(CopyFromState cstate, ResultRelInfo *resultRelInfo,
+								TupleTableSlot *myslot, EState *estate);
+
+
 /*
  * error context callback for COPY FROM
  *
@@ -626,6 +635,231 @@ CopyMultiInsertInfoStore(CopyMultiInsertInfo *miinfo, ResultRelInfo *rri,
 }
 
 /*
+ * Analog of NextCopyFrom() but ignore rows with errors while copying.
+ */
+static bool
+safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext, Datum *values, bool *nulls)
+{
+	SafeCopyFromState *sfcstate = cstate->sfcstate;
+	bool valid_row = true;
+
+	sfcstate->skip_row = false;
+
+	PG_TRY();
+	{
+		if (!sfcstate->replay_is_active)
+		{
+			if (sfcstate->begin_subtransaction)
+			{
+				BeginInternalSubTransaction(NULL);
+				CurrentResourceOwner = sfcstate->oldowner;
+
+				sfcstate->begin_subtransaction = false;
+			}
+
+			if (sfcstate->saved_tuples < REPLAY_BUFFER_SIZE)
+			{
+				valid_row = NextCopyFrom(cstate, econtext, values, nulls);
+				if (valid_row)
+				{
+					HeapTuple saved_tuple;
+					MemoryContext cxt;
+
+					/* Fill replay_buffer in oldcontext*/
+					cxt = MemoryContextSwitchTo(sfcstate->oldcontext);
+					saved_tuple = heap_form_tuple(RelationGetDescr(cstate->rel), values, nulls);
+					sfcstate->replay_buffer[sfcstate->saved_tuples++] = saved_tuple;
+					MemoryContextSwitchTo(cxt);
+
+					sfcstate->skip_row = true;
+				}
+				else if (!sfcstate->processed_remaining_tuples)
+				{
+					ReleaseCurrentSubTransaction();
+					CurrentResourceOwner = sfcstate->oldowner;
+
+					if (sfcstate->replayed_tuples < sfcstate->saved_tuples)
+					{
+						/* Prepare to replay remaining tuples if they exist */
+						sfcstate->replay_is_active = true;
+						sfcstate->processed_remaining_tuples = true;
+						sfcstate->skip_row = true;
+
+						return true;
+					}
+				}
+			}
+			else
+			{
+				/* Buffer was filled, commit subtransaction and prepare to replay */
+				ReleaseCurrentSubTransaction();
+				CurrentResourceOwner = sfcstate->oldowner;
+
+				sfcstate->replay_is_active = true;
+				sfcstate->begin_subtransaction = true;
+				sfcstate->skip_row = true;
+			}
+		}
+		else
+		{
+			if (sfcstate->replayed_tuples < sfcstate->saved_tuples)
+				/* Replaying tuple */
+				heap_deform_tuple(sfcstate->replay_buffer[sfcstate->replayed_tuples++], RelationGetDescr(cstate->rel), values, nulls);
+			else
+			{
+				/* Clean up replay_buffer */
+				MemSet(sfcstate->replay_buffer, 0, REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
+				sfcstate->saved_tuples = sfcstate->replayed_tuples = 0;
+
+				sfcstate->replay_is_active = false;
+				sfcstate->skip_row = true;
+			}
+		}
+	}
+	PG_CATCH();
+	{
+		ErrorData *errdata;
+		MemoryContext cxt = MemoryContextSwitchTo(sfcstate->oldcontext);
+
+		errdata = CopyErrorData();
+
+		RollbackAndReleaseCurrentSubTransaction();
+		CurrentResourceOwner = sfcstate->oldowner;
+
+		switch (errdata->sqlerrcode)
+		{
+			/* Ignore data exceptions */
+			case ERRCODE_DATA_EXCEPTION:
+			case ERRCODE_ARRAY_ELEMENT_ERROR:
+			case ERRCODE_DATETIME_VALUE_OUT_OF_RANGE:
+			case ERRCODE_INTERVAL_FIELD_OVERFLOW:
+			case ERRCODE_INVALID_CHARACTER_VALUE_FOR_CAST:
+			case ERRCODE_INVALID_DATETIME_FORMAT:
+			case ERRCODE_INVALID_ESCAPE_CHARACTER:
+			case ERRCODE_INVALID_ESCAPE_SEQUENCE:
+			case ERRCODE_NONSTANDARD_USE_OF_ESCAPE_CHARACTER:
+			case ERRCODE_INVALID_PARAMETER_VALUE:
+			case ERRCODE_INVALID_TABLESAMPLE_ARGUMENT:
+			case ERRCODE_INVALID_TIME_ZONE_DISPLACEMENT_VALUE:
+			case ERRCODE_NULL_VALUE_NOT_ALLOWED:
+			case ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE:
+			case ERRCODE_SEQUENCE_GENERATOR_LIMIT_EXCEEDED:
+			case ERRCODE_STRING_DATA_LENGTH_MISMATCH:
+			case ERRCODE_STRING_DATA_RIGHT_TRUNCATION:
+			case ERRCODE_INVALID_TEXT_REPRESENTATION:
+			case ERRCODE_INVALID_BINARY_REPRESENTATION:
+			case ERRCODE_BAD_COPY_FILE_FORMAT:
+			case ERRCODE_UNTRANSLATABLE_CHARACTER:
+			case ERRCODE_DUPLICATE_JSON_OBJECT_KEY_VALUE:
+			case ERRCODE_INVALID_ARGUMENT_FOR_SQL_JSON_DATETIME_FUNCTION:
+			case ERRCODE_INVALID_JSON_TEXT:
+			case ERRCODE_INVALID_SQL_JSON_SUBSCRIPT:
+			case ERRCODE_MORE_THAN_ONE_SQL_JSON_ITEM:
+			case ERRCODE_NO_SQL_JSON_ITEM:
+			case ERRCODE_NON_NUMERIC_SQL_JSON_ITEM:
+			case ERRCODE_NON_UNIQUE_KEYS_IN_A_JSON_OBJECT:
+			case ERRCODE_SINGLETON_SQL_JSON_ITEM_REQUIRED:
+			case ERRCODE_SQL_JSON_ARRAY_NOT_FOUND:
+			case ERRCODE_SQL_JSON_MEMBER_NOT_FOUND:
+			case ERRCODE_SQL_JSON_NUMBER_NOT_FOUND:
+			case ERRCODE_SQL_JSON_OBJECT_NOT_FOUND:
+			case ERRCODE_TOO_MANY_JSON_ARRAY_ELEMENTS:
+			case ERRCODE_TOO_MANY_JSON_OBJECT_MEMBERS:
+			case ERRCODE_SQL_JSON_SCALAR_REQUIRED:
+			case ERRCODE_SQL_JSON_ITEM_CANNOT_BE_CAST_TO_TARGET_TYPE:
+				sfcstate->errors++;
+				if (sfcstate->errors <= 100)
+					ereport(WARNING,
+							(errcode(errdata->sqlerrcode),
+							errmsg("%s", errdata->context)));
+
+				sfcstate->begin_subtransaction = true;
+				sfcstate->skip_row = true;
+
+				break;
+			default:
+				PG_RE_THROW();
+		}
+
+		FlushErrorState();
+		FreeErrorData(errdata);
+		errdata = NULL;
+
+		MemoryContextSwitchTo(cxt);
+	}
+	PG_END_TRY();
+
+	if (!valid_row)
+	{
+		if (sfcstate->errors == 0)
+			ereport(NOTICE,
+					errmsg("FIND %d ERRORS", sfcstate->errors));
+		else if (sfcstate->errors == 1)
+			ereport(WARNING,
+					errmsg("FIND %d ERROR", sfcstate->errors));
+		else
+			ereport(WARNING,
+					errmsg("FIND %d ERRORS", sfcstate->errors));
+
+		return false;
+	}
+
+	return true;
+}
+
+/*
+ * Ignore constraints if IGNORE_ERRORS is enabled
+ */
+static void
+safeExecConstraints(CopyFromState cstate, ResultRelInfo *resultRelInfo, TupleTableSlot *myslot, EState *estate)
+{
+	SafeCopyFromState *sfcstate = cstate->sfcstate;
+
+	sfcstate->skip_row = false;
+
+	PG_TRY();
+		ExecConstraints(resultRelInfo, myslot, estate);
+	PG_CATCH();
+	{
+		ErrorData *errdata;
+		MemoryContext cxt = MemoryContextSwitchTo(sfcstate->oldcontext);
+
+		errdata = CopyErrorData();
+
+		switch (errdata->sqlerrcode)
+		{
+			/* Ignore constraint violations */
+			case ERRCODE_INTEGRITY_CONSTRAINT_VIOLATION:
+			case ERRCODE_RESTRICT_VIOLATION:
+			case ERRCODE_NOT_NULL_VIOLATION:
+			case ERRCODE_FOREIGN_KEY_VIOLATION:
+			case ERRCODE_UNIQUE_VIOLATION:
+			case ERRCODE_CHECK_VIOLATION:
+			case ERRCODE_EXCLUSION_VIOLATION:
+				sfcstate->errors++;
+				if (cstate->sfcstate->errors <= 100)
+					ereport(WARNING,
+							(errcode(errdata->sqlerrcode),
+							errmsg("%s", errdata->context)));
+
+				sfcstate->begin_subtransaction = true;
+				sfcstate->skip_row = true;
+
+				break;
+			default:
+				PG_RE_THROW();
+		}
+
+		FlushErrorState();
+		FreeErrorData(errdata);
+		errdata = NULL;
+
+		MemoryContextSwitchTo(cxt);
+	}
+	PG_END_TRY();
+}
+
+/*
  * Copy FROM file to relation.
  */
 uint64
@@ -639,6 +873,7 @@ CopyFrom(CopyFromState cstate)
 	ExprContext *econtext;
 	TupleTableSlot *singleslot = NULL;
 	MemoryContext oldcontext = CurrentMemoryContext;
+	ResourceOwner oldowner = CurrentResourceOwner;
 
 	PartitionTupleRouting *proute = NULL;
 	ErrorContextCallback errcallback;
@@ -949,10 +1184,27 @@ CopyFrom(CopyFromState cstate)
 	errcallback.previous = error_context_stack;
 	error_context_stack = &errcallback;
 
+	/* Initialize safeCopyFromState for IGNORE_ERRORS option*/
+	if (cstate->opts.ignore_errors)
+	{
+		cstate->sfcstate = palloc(sizeof(SafeCopyFromState));
+
+		cstate->sfcstate->saved_tuples = 0;
+		cstate->sfcstate->replayed_tuples = 0;
+		cstate->sfcstate->errors = 0;
+		cstate->sfcstate->replay_is_active = false;
+		cstate->sfcstate->begin_subtransaction = true;
+		cstate->sfcstate->processed_remaining_tuples = false;
+
+		cstate->sfcstate->oldowner = oldowner;
+		cstate->sfcstate->oldcontext = oldcontext;
+	}
+
 	for (;;)
 	{
 		TupleTableSlot *myslot;
 		bool		skip_tuple;
+		bool		valid_row;
 
 		CHECK_FOR_INTERRUPTS();
 
@@ -985,8 +1237,22 @@ CopyFrom(CopyFromState cstate)
 
 		ExecClearTuple(myslot);
 
-		/* Directly store the values/nulls array in the slot */
-		if (!NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull))
+		/*
+		 * If option IGNORE_ERRORS is enabled, COPY skips rows with errors.
+		 * NextCopyFrom() directly store the values/nulls array in the slot.
+		 */
+		if (cstate->sfcstate)
+		{
+			valid_row = safeNextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull);
+
+			if (cstate->sfcstate->skip_row)
+				continue;
+
+		}
+		else
+			valid_row = NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull);
+
+		if (!valid_row)
 			break;
 
 		ExecStoreVirtualTuple(myslot);
@@ -1169,7 +1435,17 @@ CopyFrom(CopyFromState cstate)
 				 */
 				if (resultRelInfo->ri_FdwRoutine == NULL &&
 					resultRelInfo->ri_RelationDesc->rd_att->constr)
-					ExecConstraints(resultRelInfo, myslot, estate);
+				{
+					if (cstate->opts.ignore_errors)
+					{
+						safeExecConstraints(cstate, resultRelInfo, myslot, estate);
+
+						if (cstate->sfcstate->skip_row)
+							continue;
+					}
+					else
+						ExecConstraints(resultRelInfo, myslot, estate);
+				}
 
 				/*
 				 * Also check the tuple against the partition constraint, if
