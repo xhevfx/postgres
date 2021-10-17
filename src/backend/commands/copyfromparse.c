@@ -860,6 +860,7 @@ NextCopyFrom(CopyFromState cstate, ExprContext *econtext,
 	int			i;
 	int		   *defmap = cstate->defmap;
 	ExprState **defexprs = cstate->defexprs;
+	cstate->can_skip_row = false;
 
 	tupDesc = RelationGetDescr(cstate->rel);
 	num_phys_attrs = tupDesc->natts;
@@ -883,9 +884,12 @@ NextCopyFrom(CopyFromState cstate, ExprContext *econtext,
 
 		/* check for overflowing fields */
 		if (attr_count > 0 && fldct > attr_count)
+		{
+			cstate->can_skip_row = true;
 			ereport(ERROR,
 					(errcode(ERRCODE_BAD_COPY_FILE_FORMAT),
 					 errmsg("extra data after last expected column")));
+		}
 
 		fieldno = 0;
 
@@ -1494,6 +1498,7 @@ CopyReadAttributesText(CopyFromState cstate)
 	{
 		if (cstate->line_buf.len != 0)
 		{
+			cstate->can_skip_row = false;
 			cstate->err_message = "extra data after last expected column";
 			cstate->sqlerrcode = ERRCODE_BAD_COPY_FILE_FORMAT;
 			ereport(ERROR,
