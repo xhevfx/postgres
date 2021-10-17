@@ -863,9 +863,10 @@ CopyFrom(CopyFromState cstate)
 		}
 		PG_CATCH();
 		{
-			ereport(ERROR,
-					(errcode(cstate->sqlerrcode),
-					 errmsg(cstate->err_message)));
+			if (!cstate->can_skip_row)
+				ereport(ERROR,
+						(errcode(cstate->sqlerrcode),
+						errmsg(cstate->err_message)));
 		}
 		PG_END_TRY();
 
