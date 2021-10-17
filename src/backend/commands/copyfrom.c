@@ -864,8 +864,8 @@ CopyFrom(CopyFromState cstate)
 		PG_CATCH();
 		{
 			ereport(ERROR,
-					(errcode(ERRCODE_BAD_COPY_FILE_FORMAT),
-					 errmsg("AAAAAAAAAAAAAAAAAAA")));
+					(errcode(cstate->sqlerrcode),
+					 errmsg(cstate->err_message)));
 		}
 		PG_END_TRY();
 
