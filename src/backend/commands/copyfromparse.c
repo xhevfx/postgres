@@ -1490,9 +1490,13 @@ CopyReadAttributesText(CopyFromState cstate)
 	if (cstate->max_fields <= 0)
 	{
 		if (cstate->line_buf.len != 0)
+		{
+			cstate->err_message = "extra data after last expected column";
+			cstate->sqlerrcode = ERRCODE_BAD_COPY_FILE_FORMAT;
 			ereport(ERROR,
 					(errcode(ERRCODE_BAD_COPY_FILE_FORMAT),
 					 errmsg("extra data after last expected column")));
+		}
 		return 0;
 	}
 
