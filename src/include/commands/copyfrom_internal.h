@@ -82,11 +82,6 @@ typedef struct CopyFromStateData
 	const char *cur_attname;	/* current att for error messages */
 	const char *cur_attval;		/* current att value for error messages */
 
-	/* for error messages */
-	bool can_skip_row;
-	const char *err_message;
-	int sqlerrcode;
-
 	/*
 	 * Working state
 	 */

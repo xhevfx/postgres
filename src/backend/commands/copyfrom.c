@@ -548,7 +548,8 @@ CopyFrom(CopyFromState cstate)
 	bool		has_before_insert_row_trig;
 	bool		has_instead_insert_row_trig;
 	bool		leafpart_use_multi_insert = false;
-	bool		break_var = false;
+	bool		break_loop = false;
+	MemoryContext ccxt;
 
 	Assert(cstate->rel);
 	Assert(list_length(cstate->range_table) == 1);
@@ -856,26 +857,28 @@ CopyFrom(CopyFromState cstate)
 
 		ExecClearTuple(myslot);
 
+		ccxt = CurrentMemoryContext;
+
 		PG_TRY();
 		{
-		if (!NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull))
-			break_var = true;
+			if (!NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull))
+				break_loop = true;
 		}
 		PG_CATCH();
 		{
-			if (!cstate->can_skip_row)
-				ereport(ERROR,
-						(errcode(cstate->sqlerrcode),
-						errmsg(cstate->err_message)));
+			MemoryContext ecxt = MemoryContextSwitchTo(ccxt);
+			ErrorData *errdata = CopyErrorData();
+			MemoryContextSwitchTo(ecxt);
+			PG_RE_THROW();
+
+			FlushErrorState();
+			FreeErrorData(errdata);
+			errdata = NULL;
 		}
 		PG_END_TRY();
 
-		if (break_var)
+		if (break_loop)
 			break;
-
-		/* Directly store the values/nulls array in the slot */
-		// if (!NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull))
-		// 	break;
 
 		ExecStoreVirtualTuple(myslot);
 
