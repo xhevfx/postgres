@@ -868,8 +868,17 @@ CopyFrom(CopyFromState cstate)
 		{
 			MemoryContext ecxt = MemoryContextSwitchTo(ccxt);
 			ErrorData *errdata = CopyErrorData();
-			MemoryContextSwitchTo(ecxt);
-			PG_RE_THROW();
+
+			switch (errdata->sqlerrcode)
+			{
+				case ERRCODE_BAD_COPY_FILE_FORMAT:
+					break;
+				case ERRCODE_INVALID_TEXT_REPRESENTATION:
+					break;
+				default:
+					MemoryContextSwitchTo(ecxt);
+					PG_RE_THROW();
+			}
 
 			FlushErrorState();
 			FreeErrorData(errdata);
