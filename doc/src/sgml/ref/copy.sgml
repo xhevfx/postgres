@@ -34,6 +34,7 @@ COPY { <replaceable class="parameter">table_name</replaceable> [ ( <replaceable 
 
     FORMAT <replaceable class="parameter">format_name</replaceable>
     FREEZE [ <replaceable class="parameter">boolean</replaceable> ]
+    IGNORE_ERRORS [ <replaceable class="parameter">boolean</replaceable> ]
     DELIMITER '<replaceable class="parameter">delimiter_character</replaceable>'
     NULL '<replaceable class="parameter">null_string</replaceable>'
     HEADER [ <replaceable class="parameter">boolean</replaceable> | MATCH ]
