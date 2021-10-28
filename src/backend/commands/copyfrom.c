@@ -548,8 +548,6 @@ CopyFrom(CopyFromState cstate)
 	bool		has_before_insert_row_trig;
 	bool		has_instead_insert_row_trig;
 	bool		leafpart_use_multi_insert = false;
-	bool		break_loop = false;
-	MemoryContext ccxt;
 
 	Assert(cstate->rel);
 	Assert(list_length(cstate->range_table) == 1);
@@ -825,6 +823,7 @@ CopyFrom(CopyFromState cstate)
 	{
 		TupleTableSlot *myslot;
 		bool		skip_tuple;
+		bool		break_loop = false;
 
 		CHECK_FOR_INTERRUPTS();
 
@@ -857,37 +856,49 @@ CopyFrom(CopyFromState cstate)
 
 		ExecClearTuple(myslot);
 
-		ccxt = CurrentMemoryContext;
+		/*
+		 * If option IGNORE_ERRORS is enabled, then COPY skip rows with errors.
+		 * Use PG_TRY, PG_CATCH construction to catch errors related to malformed
+		 * data. NextCopyFrom() directly store the values/nulls array in the slot.
+		 */
+		if (cstate->opts.ignore_errors)
+		{
+			MemoryContext ccxt = CurrentMemoryContext;
 
-		PG_TRY();
+			PG_TRY();
+			{
+				if (!NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull))
+					break_loop = true;
+			}
+			PG_CATCH();
+			{
+				MemoryContext ecxt = MemoryContextSwitchTo(ccxt);
+				ErrorData *errdata = CopyErrorData();
+
+				switch (errdata->sqlerrcode)
+				{
+					case ERRCODE_BAD_COPY_FILE_FORMAT:
+					case ERRCODE_INVALID_TEXT_REPRESENTATION:
+						break;
+					default:
+						MemoryContextSwitchTo(ecxt);
+						PG_RE_THROW();
+				}
+
+				FlushErrorState();
+				FreeErrorData(errdata);
+				errdata = NULL;
+			}
+			PG_END_TRY();
+
+			if (break_loop)
+				break;
+		}
+		else
 		{
 			if (!NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull))
-				break_loop = true;
+				break;
 		}
-		PG_CATCH();
-		{
-			MemoryContext ecxt = MemoryContextSwitchTo(ccxt);
-			ErrorData *errdata = CopyErrorData();
-
-			switch (errdata->sqlerrcode)
-			{
-				case ERRCODE_BAD_COPY_FILE_FORMAT:
-					break;
-				case ERRCODE_INVALID_TEXT_REPRESENTATION:
-					break;
-				default:
-					MemoryContextSwitchTo(ecxt);
-					PG_RE_THROW();
-			}
-
-			FlushErrorState();
-			FreeErrorData(errdata);
-			errdata = NULL;
-		}
-		PG_END_TRY();
-
-		if (break_loop)
-			break;
 
 		ExecStoreVirtualTuple(myslot);
 
