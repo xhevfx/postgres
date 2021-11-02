@@ -868,7 +868,11 @@ CopyFrom(CopyFromState cstate)
 			PG_TRY();
 			{
 				if (!NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull))
+				{
+					// can't do break in PG_TRY
 					break_loop = true;
+					processed--;
+				}
 			}
 			PG_CATCH();
 			{
