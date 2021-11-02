@@ -938,14 +938,50 @@ NextCopyFrom(CopyFromState cstate, ExprContext *econtext,
 
 			cstate->cur_attname = NameStr(att->attname);
 			cstate->cur_attval = string;
-			values[m] = InputFunctionCall(&in_functions[m],
-										  string,
-										  typioparams[m],
-										  att->atttypmod);
-			if (string != NULL)
-				nulls[m] = false;
-			cstate->cur_attname = NULL;
-			cstate->cur_attval = NULL;
+
+			/*
+			 * Case for IGNORE_ERRORS option. Doesn't print row with error data.
+			 */
+			if (cstate->opts.ignore_errors)
+			{
+				bool if_error = false;
+
+				PG_TRY();
+				{
+					values[m] = InputFunctionCall(&in_functions[m],
+											string,
+											typioparams[m],
+											att->atttypmod);
+				}
+				PG_CATCH();
+				{
+					if_error = true;
+					MemSet(nulls, true, num_phys_attrs * sizeof(bool));
+					fieldno = attr_count;
+				}
+				PG_END_TRY();
+
+				if (if_error)
+					break;
+
+				if (string != NULL && if_error == false)
+					nulls[m] = false;
+
+				cstate->cur_attname = NULL;
+				cstate->cur_attval = NULL;
+			}
+			else
+			{
+				values[m] = InputFunctionCall(&in_functions[m],
+											string,
+											typioparams[m],
+											att->atttypmod);
+
+				if (string != NULL)
+					nulls[m] = false;
+				cstate->cur_attname = NULL;
+				cstate->cur_attval = NULL;
+			}
 		}
 
 		Assert(fieldno == attr_count);
