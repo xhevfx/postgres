@@ -958,6 +958,8 @@ NextCopyFrom(CopyFromState cstate, ExprContext *econtext,
 					if_error = true;
 					MemSet(nulls, true, num_phys_attrs * sizeof(bool));
 					fieldno = attr_count;
+
+					PG_RE_THROW();
 				}
 				PG_END_TRY();
 
