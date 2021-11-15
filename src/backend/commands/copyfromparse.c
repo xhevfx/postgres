@@ -1529,10 +1529,17 @@ CopyReadAttributesText(CopyFromState cstate)
 	if (cstate->max_fields <= 0)
 	{
 		if (cstate->line_buf.len != 0)
-			ereport(ERROR,
-					(errcode(ERRCODE_BAD_COPY_FILE_FORMAT),
+		{
+			if (cstate->opts.ignore_errors)
+				ereport(ERROR,
+					(errcode(-1),
 					 errmsg("extra data after last expected column")));
+			else
+				ereport(ERROR,
+						(errcode(ERRCODE_BAD_COPY_FILE_FORMAT),
+						errmsg("extra data after last expected column")));
 		return 0;
+		}
 	}
 
 	resetStringInfo(&cstate->attribute_buf);
