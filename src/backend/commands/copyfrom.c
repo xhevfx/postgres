@@ -871,7 +871,6 @@ CopyFrom(CopyFromState cstate)
 				{
 					// can't do break in PG_TRY
 					break_loop = true;
-					processed--;
 				}
 			}
 			PG_CATCH();
@@ -883,6 +882,8 @@ CopyFrom(CopyFromState cstate)
 				{
 					case ERRCODE_BAD_COPY_FILE_FORMAT:
 					case ERRCODE_INVALID_TEXT_REPRESENTATION:
+						elog(WARNING, errdata->context);
+						processed--;
 						break;
 					default:
 						MemoryContextSwitchTo(ecxt);
