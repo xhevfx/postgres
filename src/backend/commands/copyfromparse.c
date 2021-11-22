@@ -942,7 +942,7 @@ NextCopyFrom(CopyFromState cstate, ExprContext *econtext,
 			 */
 			if (cstate->opts.ignore_errors)
 			{
-				bool if_error = false;
+				bool is_error = false;
 
 				PG_TRY();
 				{
@@ -953,20 +953,18 @@ NextCopyFrom(CopyFromState cstate, ExprContext *econtext,
 				}
 				PG_CATCH();
 				{
-					if_error = true;
-					MemSet(nulls, true, num_phys_attrs * sizeof(bool));
+					is_error = true;
 					fieldno = attr_count;
 
 					PG_RE_THROW();
 				}
 				PG_END_TRY();
 
-				if (if_error)
+				if (is_error)
 					break;
 
-				if (string != NULL && if_error == false)
+				if (string != NULL && is_error == false)
 					nulls[m] = false;
-
 				cstate->cur_attname = NULL;
 				cstate->cur_attval = NULL;
 			}
