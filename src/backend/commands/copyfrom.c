@@ -823,7 +823,8 @@ CopyFrom(CopyFromState cstate)
 	{
 		TupleTableSlot *myslot;
 		bool		skip_tuple;
-		bool		break_loop = false;
+		bool		break_for = false;
+		bool		skip_tuple_ignore_errors = false;
 
 		CHECK_FOR_INTERRUPTS();
 
@@ -870,7 +871,7 @@ CopyFrom(CopyFromState cstate)
 				if (!NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull))
 				{
 					// can't do break in PG_TRY
-					break_loop = true;
+					break_for = true;
 				}
 			}
 			PG_CATCH();
@@ -882,8 +883,8 @@ CopyFrom(CopyFromState cstate)
 				{
 					case ERRCODE_BAD_COPY_FILE_FORMAT:
 					case ERRCODE_INVALID_TEXT_REPRESENTATION:
+						skip_tuple_ignore_errors = true;
 						elog(WARNING, errdata->context);
-						processed--;
 						break;
 					default:
 						MemoryContextSwitchTo(ecxt);
@@ -896,7 +897,7 @@ CopyFrom(CopyFromState cstate)
 			}
 			PG_END_TRY();
 
-			if (break_loop)
+			if (break_for)
 				break;
 		}
 		else
@@ -1048,6 +1049,8 @@ CopyFrom(CopyFromState cstate)
 		}
 
 		skip_tuple = false;
+		if (skip_tuple_ignore_errors)
+			skip_tuple = true;
 
 		/* BEFORE ROW INSERT Triggers */
 		if (has_before_insert_row_trig)
