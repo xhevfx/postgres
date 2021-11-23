@@ -864,6 +864,7 @@ NextCopyFrom(CopyFromState cstate, ExprContext *econtext,
 	tupDesc = RelationGetDescr(cstate->rel);
 	num_phys_attrs = tupDesc->natts;
 	attr_count = list_length(cstate->attnumlist);
+	cstate->attr_count = attr_count;
 
 	/* Initialize all values for row to NULL */
 	MemSet(values, 0, num_phys_attrs * sizeof(Datum));
@@ -936,50 +937,15 @@ NextCopyFrom(CopyFromState cstate, ExprContext *econtext,
 
 			cstate->cur_attname = NameStr(att->attname);
 			cstate->cur_attval = string;
+			values[m] = InputFunctionCall(&in_functions[m],
+										string,
+										typioparams[m],
+										att->atttypmod);
 
-			/*
-			 * Case for IGNORE_ERRORS option. Doesn't print row with error data.
-			 */
-			if (cstate->opts.ignore_errors)
-			{
-				bool is_error = false;
-
-				PG_TRY();
-				{
-					values[m] = InputFunctionCall(&in_functions[m],
-											string,
-											typioparams[m],
-											att->atttypmod);
-				}
-				PG_CATCH();
-				{
-					is_error = true;
-					fieldno = attr_count;
-
-					PG_RE_THROW();
-				}
-				PG_END_TRY();
-
-				if (is_error)
-					break;
-
-				if (string != NULL && is_error == false)
-					nulls[m] = false;
-				cstate->cur_attname = NULL;
-				cstate->cur_attval = NULL;
-			}
-			else
-			{
-				values[m] = InputFunctionCall(&in_functions[m],
-											string,
-											typioparams[m],
-											att->atttypmod);
-
-				if (string != NULL)
-					nulls[m] = false;
-				cstate->cur_attname = NULL;
-				cstate->cur_attval = NULL;
-			}
+			if (string != NULL)
+				nulls[m] = false;
+			cstate->cur_attname = NULL;
+			cstate->cur_attval = NULL;
 		}
 
 		Assert(fieldno == attr_count);

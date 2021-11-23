@@ -823,8 +823,6 @@ CopyFrom(CopyFromState cstate)
 	{
 		TupleTableSlot *myslot;
 		bool		skip_tuple;
-		bool		break_for = false;
-		bool		skip_tuple_ignore_errors = false;
 
 		CHECK_FOR_INTERRUPTS();
 
@@ -858,13 +856,18 @@ CopyFrom(CopyFromState cstate)
 		ExecClearTuple(myslot);
 
 		/*
-		 * If option IGNORE_ERRORS is enabled, then COPY skip rows with errors.
-		 * Use PG_TRY, PG_CATCH construction to catch errors related to malformed
-		 * data. NextCopyFrom() directly store the values/nulls array in the slot.
+		 * If option IGNORE_ERRORS is enabled, COPY skip rows with errors.
+		 * NextCopyFrom() directly store the values/nulls array in the slot.
 		 */
 		if (cstate->opts.ignore_errors)
 		{
+			bool break_for = false;
+			bool skip_tuple_ignore_errors = false;
 			MemoryContext ccxt = CurrentMemoryContext;
+			ResourceOwner oldowner = CurrentResourceOwner;
+
+			BeginInternalSubTransaction(NULL);
+			MemoryContextSwitchTo(ccxt);
 
 			PG_TRY();
 			{
@@ -873,6 +876,10 @@ CopyFrom(CopyFromState cstate)
 					// can't do break in PG_TRY
 					break_for = true;
 				}
+
+				ReleaseCurrentSubTransaction();
+				MemoryContextSwitchTo(ccxt);
+				CurrentResourceOwner = oldowner;
 			}
 			PG_CATCH();
 			{
@@ -885,6 +892,15 @@ CopyFrom(CopyFromState cstate)
 					case ERRCODE_INVALID_TEXT_REPRESENTATION:
 						skip_tuple_ignore_errors = true;
 						elog(WARNING, errdata->context);
+
+						RollbackAndReleaseCurrentSubTransaction();
+						MemoryContextSwitchTo(ccxt);
+						CurrentResourceOwner = oldowner;
+
+						ExecClearTuple(myslot);
+						MemSet(myslot->tts_values, 0, cstate->attr_count * sizeof(Datum));
+						MemSet(myslot->tts_isnull, true, cstate->attr_count * sizeof(bool));
+
 						break;
 					default:
 						MemoryContextSwitchTo(ecxt);
@@ -899,6 +915,9 @@ CopyFrom(CopyFromState cstate)
 
 			if (break_for)
 				break;
+
+			if (skip_tuple_ignore_errors)
+				continue;
 		}
 		else
 		{
@@ -1049,8 +1068,6 @@ CopyFrom(CopyFromState cstate)
 		}
 
 		skip_tuple = false;
-		if (skip_tuple_ignore_errors)
-			skip_tuple = true;
 
 		/* BEFORE ROW INSERT Triggers */
 		if (has_before_insert_row_trig)
