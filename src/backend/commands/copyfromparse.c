@@ -1532,7 +1532,7 @@ CopyReadAttributesText(CopyFromState cstate)
 		{
 			if (cstate->opts.ignore_errors)
 				ereport(ERROR,
-					(errcode(-1),
+					(errcode(ERRCODE_FOR_IGNORE_ERRORS),
 					 errmsg("extra data after last expected column")));
 			else
 				ereport(ERROR,
