@@ -24,6 +24,7 @@
 #include "storage/buf.h"
 #include "storage/lock.h"
 #include "utils/relcache.h"
+#include "utils/typcache.h"
 
 /*
  * Flags for amparallelvacuumoptions to control the participation of bulkdelete
@@ -188,6 +189,7 @@ typedef struct VacAttrStats
 #define VACOPT_SKIP_LOCKED 0x20 /* skip if cannot get lock */
 #define VACOPT_PROCESS_TOAST 0x40	/* process the TOAST table, if any */
 #define VACOPT_DISABLE_PAGE_SKIPPING 0x80	/* don't skip any pages */
+#define VACOPT_MERGE_STATS 0x0100	/* merge statistics from children */
 
 /*
  * Values used by index_cleanup and truncate params.
