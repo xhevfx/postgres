@@ -2,8 +2,8 @@
 #define FTCOPY_H
 
 #include "postgres.h"
-
 #include "commands/copy.h"
+#include "commands/copyfrom_internal.h"
 #include "executor/executor.h"
 #include "executor/tuptable.h"
 #include "nodes/execnodes.h"
@@ -39,7 +39,7 @@ typedef struct {
 	ResourceOwner	procResOwner;
 
 	EState	*estate;
-	CopyState	cstate;
+	CopyFromState	cstate;
 	BulkInsertState bistate;
 	ResultRelInfo *resultRelInfo;
 	TupleTableSlot *myslot;
@@ -48,16 +48,16 @@ typedef struct {
 } ftCopyState;
 
 
-extern bool ftNextCopyFrom(CopyState cstate, ExprContext *econtext, Datum *values, bool *nulls, Oid *tupleOid,
+extern bool ftNextCopyFrom(CopyFromState cstate, ExprContext *econtext, Datum *values, bool *nulls, Oid *tupleOid,
 												   bool enforce_length);
 extern TupleTableSlot *ImmediatelyExecARInsertTriggers(EState *estate, ResultRelInfo *relinfo, TupleTableSlot *slot);
 
 extern void ftCopyFromInsertBatch(ftCopyState *ftcstate, BulkInsertState bistateCopyState,
 								int nBufferedTuples, HeapTuple *bufferedTuples);
 
-extern int ftCurrentLineno(CopyState cstate);
-extern char *ftCurrentLineData(CopyState cstate);
-extern void ftSetErrorContext(CopyState cstate, int lineno, char *data);
+extern int ftCurrentLineno(CopyFromState cstate);
+extern char *ftCurrentLineData(CopyFromState cstate);
+extern void ftSetErrorContext(CopyFromState cstate, int lineno, char *data);
 
 
 

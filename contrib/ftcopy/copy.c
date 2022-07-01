@@ -7,6 +7,7 @@
 #include "ftcopy.h"
 
 #include "commands/copy.h"
+#include "commands/copyfrom_internal.h"
 #include "commands/trigger.h"
 #include "executor/executor.h"
 #include "lib/stringinfo.h"
@@ -171,19 +172,19 @@ typedef struct CopyStateData
  * trivial methods that enable access to private CopyState properties
  */
 int
-ftCurrentLineno(CopyState cstate)
+ftCurrentLineno(CopyFromState cstate)
 {
 	return cstate->cur_lineno;
 }
 
 char *
-ftCurrentLineData(CopyState cstate)
+ftCurrentLineData(CopyFromState cstate)
 {
 	return cstate->line_buf.data;
 }
 
 void
-ftSetErrorContext(CopyState cstate, int lineno, char *data)
+ftSetErrorContext(CopyFromState cstate, int lineno, char *data)
 {
 	cstate->cur_lineno = lineno;
 	cstate->line_buf.data = data;
@@ -201,7 +202,7 @@ ftSetErrorContext(CopyState cstate, int lineno, char *data)
  * Oid of the tuple is returned with 'tupleOid' separately.
  */
 bool
-ftNextCopyFrom(CopyState cstate, ExprContext *econtext,
+ftNextCopyFrom(CopyFromState cstate, ExprContext *econtext,
 			 Datum *values, bool *nulls, Oid *tupleOid,
 			 bool enforce_length)
 {

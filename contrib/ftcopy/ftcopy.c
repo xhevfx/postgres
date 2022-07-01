@@ -10,6 +10,7 @@
 #include "access/xact.h"
 #include "catalog/namespace.h"
 #include "commands/copy.h"
+#include "commands/copyfrom_internal.h"
 #include "commands/trigger.h"
 #include "executor/executor.h"
 #include "nodes/makefuncs.h"
