@@ -871,7 +871,7 @@ CopyFrom(CopyFromState cstate)
 			bool tuple_is_valid = true;
 			HeapTuple tuple, copied_tuple;
 
-			MemoryContext ccxt = CurrentMemoryContext;
+			// MemoryContext ccxt = CurrentMemoryContext;
 			ResourceOwner oldowner = CurrentResourceOwner;
 
 			PG_TRY();
@@ -879,7 +879,7 @@ CopyFrom(CopyFromState cstate)
 				// if (replay_is_active)
 				// {
 				BeginInternalSubTransaction(NULL);
-				MemoryContextSwitchTo(ccxt);
+				MemoryContextSwitchTo(oldcontext);
 				// }
 
 				valid_row = NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull);
@@ -898,7 +898,7 @@ CopyFrom(CopyFromState cstate)
 					else
 						{
 							// ReleaseCurrentSubTransaction();
-							// MemoryContextSwitchTo(ccxt);
+							// MemoryContextSwitchTo(oldcontext);
 							// CurrentResourceOwner = oldowner;
 
 							MemSet(replay_buffer, NULL, REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
@@ -912,12 +912,12 @@ CopyFrom(CopyFromState cstate)
 					tuple_is_valid = false;
 
 				ReleaseCurrentSubTransaction();
-				MemoryContextSwitchTo(ccxt);
+				MemoryContextSwitchTo(oldcontext);
 				CurrentResourceOwner = oldowner;
 			}
 			PG_CATCH();
 			{
-				MemoryContext ecxt = MemoryContextSwitchTo(ccxt);
+				MemoryContext errcxt = MemoryContextSwitchTo(oldcontext);
 				ErrorData *errdata = CopyErrorData();
 
 				switch (errdata->sqlerrcode)
@@ -928,7 +928,7 @@ CopyFrom(CopyFromState cstate)
 						elog(WARNING, errdata->context);
 
 						RollbackAndReleaseCurrentSubTransaction();
-						MemoryContextSwitchTo(ccxt);
+						MemoryContextSwitchTo(oldcontext);
 						CurrentResourceOwner = oldowner;
 
 						ExecClearTuple(myslot);
@@ -937,7 +937,7 @@ CopyFrom(CopyFromState cstate)
 
 						break;
 					default:
-						MemoryContextSwitchTo(ecxt);
+						MemoryContextSwitchTo(errcxt);
 						PG_RE_THROW();
 				}
 
@@ -950,7 +950,7 @@ CopyFrom(CopyFromState cstate)
 			if (!valid_row)
 			{
 				// ReleaseCurrentSubTransaction();
-				// MemoryContextSwitchTo(ccxt);
+				// MemoryContextSwitchTo(oldcontext);
 				// CurrentResourceOwner = oldowner;
 				break;
 			}
