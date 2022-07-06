@@ -550,10 +550,13 @@ CopyFrom(CopyFromState cstate)
 	bool		leafpart_use_multi_insert = false;
 
 	/* variables for copy_ignore_errors option */
-#define			REPLAY_BUFFER_SIZE 2
+#define			REPLAY_BUFFER_SIZE 3
 	HeapTuple		replay_buffer[REPLAY_BUFFER_SIZE];
-	bool			replay_is_active = true;
-	int 			saved_tuples = 0;
+	bool			begin_subtransaction = true;
+	bool			replay_is_active;  /* turn on after replay_buffer is full */
+	int 			saved_tuples = 0;  /* tuples in replay_buffer */
+	int				replayed_tuples = 0;  /* tuples replayed to table */
+	HeapTuple 		tuple, copied_tuple;
 
 	Assert(cstate->rel);
 	Assert(list_length(cstate->range_table) == 1);
@@ -869,18 +872,18 @@ CopyFrom(CopyFromState cstate)
 		{
 			bool valid_row = true; // обязательно true ??
 			bool tuple_is_valid = true;
-			HeapTuple tuple, copied_tuple;
 
 			// MemoryContext ccxt = CurrentMemoryContext;
 			ResourceOwner oldowner = CurrentResourceOwner;
 
 			PG_TRY();
 			{
-				// if (replay_is_active)
-				// {
-				BeginInternalSubTransaction(NULL);
-				MemoryContextSwitchTo(oldcontext);
-				// }
+				if (begin_subtransaction)
+				{
+					BeginInternalSubTransaction(NULL);
+					MemoryContextSwitchTo(oldcontext);
+					CurrentResourceOwner = oldowner;
+				}
 
 				valid_row = NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull);
 				if (valid_row)
@@ -890,30 +893,26 @@ CopyFrom(CopyFromState cstate)
 
 					// if (useMultiInsert)
 					if (saved_tuples < REPLAY_BUFFER_SIZE)
-						{
-							replay_buffer[saved_tuples++] = copied_tuple;
-							saved_tuples++;
-							replay_is_active = false;
-						}
+					{
+						replay_buffer[saved_tuples++] = copied_tuple;
+						begin_subtransaction = false;
+					}
 					else
-						{
-							// ReleaseCurrentSubTransaction();
-							// MemoryContextSwitchTo(oldcontext);
-							// CurrentResourceOwner = oldowner;
+					{
+						ReleaseCurrentSubTransaction();
+						MemoryContextSwitchTo(oldcontext);
+						CurrentResourceOwner = oldowner;
 
-							MemSet(replay_buffer, NULL, REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
-							saved_tuples = 0;
+						/* clean replay_buffer */
+						MemSet(replay_buffer, NULL, REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
+						saved_tuples = 0;
 
-							replay_buffer[saved_tuples++] = copied_tuple;
-							replay_is_active = true;
-						}
+						replay_buffer[saved_tuples++] = copied_tuple;
+						begin_subtransaction = true;
+					}
 				}
 				else
 					tuple_is_valid = false;
-
-				ReleaseCurrentSubTransaction();
-				MemoryContextSwitchTo(oldcontext);
-				CurrentResourceOwner = oldowner;
 			}
 			PG_CATCH();
 			{
@@ -935,6 +934,11 @@ CopyFrom(CopyFromState cstate)
 						MemSet(myslot->tts_values, 0, cstate->attr_count * sizeof(Datum));
 						MemSet(myslot->tts_isnull, true, cstate->attr_count * sizeof(bool));
 
+						// /* clean replay_buffer */
+						// MemSet(replay_buffer, NULL, REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
+						// saved_tuples = 0;
+
+						begin_subtransaction = true;
 						break;
 					default:
 						MemoryContextSwitchTo(errcxt);
@@ -949,9 +953,9 @@ CopyFrom(CopyFromState cstate)
 
 			if (!valid_row)
 			{
-				// ReleaseCurrentSubTransaction();
-				// MemoryContextSwitchTo(oldcontext);
-				// CurrentResourceOwner = oldowner;
+				ReleaseCurrentSubTransaction(); // нужно
+				MemoryContextSwitchTo(oldcontext);
+				CurrentResourceOwner = oldowner;
 				break;
 			}
 
