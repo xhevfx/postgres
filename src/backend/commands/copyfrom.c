@@ -549,6 +549,12 @@ CopyFrom(CopyFromState cstate)
 	bool		has_instead_insert_row_trig;
 	bool		leafpart_use_multi_insert = false;
 
+	/* variables for copy_ignore_errors option */
+#define			REPLAY_BUFFER_SIZE 2
+	HeapTuple		replay_buffer[REPLAY_BUFFER_SIZE];
+	bool			replay_is_active = true;
+	int 			saved_tuples = 0;
+
 	Assert(cstate->rel);
 	Assert(list_length(cstate->range_table) == 1);
 
@@ -861,21 +867,49 @@ CopyFrom(CopyFromState cstate)
 		 */
 		if (cstate->opts.ignore_errors)
 		{
-			bool break_for = false;
-			bool skip_tuple_ignore_errors = false;
+			bool valid_row = true; // обязательно true ??
+			bool tuple_is_valid = true;
+			HeapTuple tuple, copied_tuple;
+
 			MemoryContext ccxt = CurrentMemoryContext;
 			ResourceOwner oldowner = CurrentResourceOwner;
 
-			BeginInternalSubTransaction(NULL);
-			MemoryContextSwitchTo(ccxt);
-
 			PG_TRY();
 			{
-				if (!NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull))
+				// if (replay_is_active)
+				// {
+				BeginInternalSubTransaction(NULL);
+				MemoryContextSwitchTo(ccxt);
+				// }
+
+				valid_row = NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull);
+				if (valid_row)
 				{
-					// can't do break in PG_TRY
-					break_for = true;
+					tuple = heap_form_tuple(RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
+					copied_tuple = heap_copytuple(tuple);
+
+					// if (useMultiInsert)
+					if (saved_tuples < REPLAY_BUFFER_SIZE)
+						{
+							replay_buffer[saved_tuples++] = copied_tuple;
+							saved_tuples++;
+							replay_is_active = false;
+						}
+					else
+						{
+							// ReleaseCurrentSubTransaction();
+							// MemoryContextSwitchTo(ccxt);
+							// CurrentResourceOwner = oldowner;
+
+							MemSet(replay_buffer, NULL, REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
+							saved_tuples = 0;
+
+							replay_buffer[saved_tuples++] = copied_tuple;
+							replay_is_active = true;
+						}
 				}
+				else
+					tuple_is_valid = false;
 
 				ReleaseCurrentSubTransaction();
 				MemoryContextSwitchTo(ccxt);
@@ -890,7 +924,7 @@ CopyFrom(CopyFromState cstate)
 				{
 					case ERRCODE_BAD_COPY_FILE_FORMAT:
 					case ERRCODE_INVALID_TEXT_REPRESENTATION:
-						skip_tuple_ignore_errors = true;
+						tuple_is_valid = false;
 						elog(WARNING, errdata->context);
 
 						RollbackAndReleaseCurrentSubTransaction();
@@ -913,10 +947,15 @@ CopyFrom(CopyFromState cstate)
 			}
 			PG_END_TRY();
 
-			if (break_for)
+			if (!valid_row)
+			{
+				// ReleaseCurrentSubTransaction();
+				// MemoryContextSwitchTo(ccxt);
+				// CurrentResourceOwner = oldowner;
 				break;
+			}
 
-			if (skip_tuple_ignore_errors)
+			if (!tuple_is_valid)
 				continue;
 		}
 		else
