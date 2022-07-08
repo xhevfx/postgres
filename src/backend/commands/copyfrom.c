@@ -878,41 +878,59 @@ CopyFrom(CopyFromState cstate)
 
 			PG_TRY();
 			{
-				if (begin_subtransaction)
+				if (!replay_is_active)
 				{
-					BeginInternalSubTransaction(NULL);
-					MemoryContextSwitchTo(oldcontext);
-					CurrentResourceOwner = oldowner;
-				}
-
-				valid_row = NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull);
-				if (valid_row)
-				{
-					tuple = heap_form_tuple(RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
-					copied_tuple = heap_copytuple(tuple);
-
-					// if (useMultiInsert)
-					if (saved_tuples < REPLAY_BUFFER_SIZE)
+					if (begin_subtransaction)
 					{
-						replay_buffer[saved_tuples++] = copied_tuple;
-						begin_subtransaction = false;
+						BeginInternalSubTransaction(NULL);
+						MemoryContextSwitchTo(oldcontext);
+						CurrentResourceOwner = oldowner;
+					}
+
+					valid_row = NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull);
+					if (valid_row)
+					{
+						tuple = heap_form_tuple(RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
+						copied_tuple = heap_copytuple(tuple);
+
+						if (saved_tuples < REPLAY_BUFFER_SIZE)
+						{
+							replay_buffer[saved_tuples++] = copied_tuple;
+							begin_subtransaction = false;
+						}
+						else
+						{
+							ReleaseCurrentSubTransaction();
+							MemoryContextSwitchTo(oldcontext);
+							CurrentResourceOwner = oldowner;
+
+							/* clean replay_buffer */
+							MemSet(replay_buffer, NULL, REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
+							saved_tuples = 0;
+
+							replay_buffer[saved_tuples++] = copied_tuple;
+							begin_subtransaction = true;
+						}
+					}
+					else
+						tuple_is_valid = false;
+				}
+				else
+				{
+					if (replayed_tuples < saved_tuples)
+					{
+						replayed_tuples++;
 					}
 					else
 					{
-						ReleaseCurrentSubTransaction();
-						MemoryContextSwitchTo(oldcontext);
-						CurrentResourceOwner = oldowner;
-
 						/* clean replay_buffer */
 						MemSet(replay_buffer, NULL, REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
 						saved_tuples = 0;
+						replayed_tuples = 0;
 
-						replay_buffer[saved_tuples++] = copied_tuple;
-						begin_subtransaction = true;
+						replay_is_active = false;
 					}
 				}
-				else
-					tuple_is_valid = false;
 			}
 			PG_CATCH();
 			{
