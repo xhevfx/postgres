@@ -557,6 +557,7 @@ CopyFrom(CopyFromState cstate)
 	int 			saved_tuples = 0;  /* tuples in replay_buffer */
 	int				replayed_tuples = 0;  /* tuples replayed to table */
 	HeapTuple 		tuple, copied_tuple;
+	int iterations = 0;
 
 	Assert(cstate->rel);
 	Assert(list_length(cstate->range_table) == 1);
@@ -878,10 +879,15 @@ CopyFrom(CopyFromState cstate)
 
 			PG_TRY();
 			{
+				elog(WARNING, "iteration = %d, processed = %ld\n", iterations, processed);
+				iterations++;
+
 				if (!replay_is_active)
 				{
+					elog(WARNING, "NOT REPLAYING");
 					if (begin_subtransaction)
 					{
+						elog(WARNING, "BEGIN");
 						BeginInternalSubTransaction(NULL);
 						MemoryContextSwitchTo(oldcontext);
 						CurrentResourceOwner = oldowner;
@@ -893,23 +899,25 @@ CopyFrom(CopyFromState cstate)
 						tuple = heap_form_tuple(RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
 						copied_tuple = heap_copytuple(tuple);
 
-						if (saved_tuples < REPLAY_BUFFER_SIZE)
+						if (saved_tuples < REPLAY_BUFFER_SIZE - 1) // вычитаем 1 чтобы ...
 						{
 							replay_buffer[saved_tuples++] = copied_tuple;
 							begin_subtransaction = false;
 						}
 						else
 						{
+							elog(WARNING, "COMMIT");
 							ReleaseCurrentSubTransaction();
 							MemoryContextSwitchTo(oldcontext);
 							CurrentResourceOwner = oldowner;
 
 							/* clean replay_buffer */
-							MemSet(replay_buffer, NULL, REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
-							saved_tuples = 0;
+							// MemSet(replay_buffer, NULL, REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
+							// saved_tuples = 0;
 
-							replay_buffer[saved_tuples++] = copied_tuple;
+							// replay_buffer[saved_tuples++] = copied_tuple;
 							begin_subtransaction = true;
+							replay_is_active = true;
 						}
 					}
 					else
@@ -919,6 +927,9 @@ CopyFrom(CopyFromState cstate)
 				{
 					if (replayed_tuples < saved_tuples)
 					{
+						/* flush tuple to slot*/
+						// heap_deform_tuple(replay_buffer[replayed_tuples], RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
+
 						replayed_tuples++;
 					}
 					else
@@ -930,6 +941,7 @@ CopyFrom(CopyFromState cstate)
 
 						replay_is_active = false;
 					}
+					elog(WARNING, "REPLAYING, saved_tuples = %d, replayed_tuples = %d, myslot_values = %ld", saved_tuples, replayed_tuples, myslot->tts_values[0]);
 				}
 			}
 			PG_CATCH();
@@ -942,8 +954,9 @@ CopyFrom(CopyFromState cstate)
 					case ERRCODE_BAD_COPY_FILE_FORMAT:
 					case ERRCODE_INVALID_TEXT_REPRESENTATION:
 						tuple_is_valid = false;
-						elog(WARNING, errdata->context);
+						elog(WARNING, "%s", errdata->context);
 
+						elog(WARNING, "ROLLBACK");
 						RollbackAndReleaseCurrentSubTransaction();
 						MemoryContextSwitchTo(oldcontext);
 						CurrentResourceOwner = oldowner;
@@ -971,11 +984,15 @@ CopyFrom(CopyFromState cstate)
 
 			if (!valid_row)
 			{
+				elog(WARNING, "COMMIT");
 				ReleaseCurrentSubTransaction(); // нужно
 				MemoryContextSwitchTo(oldcontext);
 				CurrentResourceOwner = oldowner;
 				break;
 			}
+
+			// if (replay_is_active) // чтобы убрать нулевые строки
+			// 	continue;
 
 			if (!tuple_is_valid)
 				continue;
