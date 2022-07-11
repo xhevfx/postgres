@@ -551,10 +551,11 @@ CopyFrom(CopyFromState cstate)
 
 	/* variables for copy_ignore_errors option */
 #define			REPLAY_BUFFER_SIZE 3
+	bool			last_replaying = false;
 	HeapTuple		replay_buffer[REPLAY_BUFFER_SIZE];
 	MemoryContext   replay_cxt = CurrentMemoryContext;
-	MemoryContext   pertuple_cxt = CurrentResourceOwner;
-	ResourceOwner   replay_owner;
+	MemoryContext   pertuple_cxt;
+	ResourceOwner   replay_owner, oldowner;
 	bool			begin_subtransaction = true;
 	bool			replay_is_active;  /* turn on after replay_buffer is full */
 	int 			saved_tuples = 0;  /* tuples in replay_buffer */
@@ -865,7 +866,6 @@ CopyFrom(CopyFromState cstate)
 		 * evaluate default expressions etc. and requires per-tuple context.
 		 */
 		MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
-		pertuple_cxt = GetPerTupleMemoryContext(estate);
 
 		ExecClearTuple(myslot);
 
@@ -875,11 +875,11 @@ CopyFrom(CopyFromState cstate)
 		 */
 		if (cstate->opts.ignore_errors)
 		{
-			bool valid_row = true; // обязательно true ??
-			bool tuple_is_valid = true;
+			bool valid_row = true; // must be true
+			bool skip_row = false; // transfer skip_tuple here for not creating this var
 
-			// MemoryContext ccxt = CurrentMemoryContext;
-			ResourceOwner oldowner = CurrentResourceOwner;
+			pertuple_cxt = GetPerTupleMemoryContext(estate);
+			oldowner = CurrentResourceOwner;
 			replay_owner = CurrentResourceOwner;
 
 			PG_TRY();
@@ -887,7 +887,7 @@ CopyFrom(CopyFromState cstate)
 				elog(WARNING, "iteration = %d, processed = %ld\n", iterations, processed);
 				iterations++;
 
-				if (!replay_is_active)
+				if (!replay_is_active) // REPLAY IS NOT ACTIVE
 				{
 					elog(WARNING, "NOT REPLAYING");
 					if (begin_subtransaction)
@@ -896,42 +896,40 @@ CopyFrom(CopyFromState cstate)
 						BeginInternalSubTransaction(NULL);
 						MemoryContextSwitchTo(pertuple_cxt);
 						CurrentResourceOwner = oldowner;
-						// CurrentResourceOwner = replay_owner;
 					}
-
-					valid_row = NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull);
-					if (valid_row)
+					if (saved_tuples < REPLAY_BUFFER_SIZE) // FILLING BUFFER
 					{
-						MemoryContextSwitchTo(replay_cxt);
-						CurrentResourceOwner = replay_owner;
-
-						tuple = heap_form_tuple(RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
-						copied_tuple = heap_copytuple(tuple);
-
-						MemoryContextSwitchTo(pertuple_cxt);
-						CurrentResourceOwner = oldowner;
-
-						if (saved_tuples < REPLAY_BUFFER_SIZE - 1) // вычитаем 1 чтобы ...
+						valid_row = NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull);
+						if (valid_row)
 						{
-							replay_buffer[saved_tuples++] = copied_tuple;
-							begin_subtransaction = false;
-						}
-						else
-						{
-							elog(WARNING, "COMMIT");
-							ReleaseCurrentSubTransaction();
+							MemoryContextSwitchTo(replay_cxt);
+							CurrentResourceOwner = replay_owner;
+
+							tuple = heap_form_tuple(RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
+							copied_tuple = heap_copytuple(tuple);
+
 							MemoryContextSwitchTo(pertuple_cxt);
 							CurrentResourceOwner = oldowner;
 
-							// replay_buffer[saved_tuples++] = copied_tuple;
-							begin_subtransaction = true;
-							replay_is_active = true;
+							replay_buffer[saved_tuples++] = copied_tuple;
+							begin_subtransaction = false;
+
+							elog(WARNING, "saved_tuples = %d, myslot_values = %ld", saved_tuples, myslot->tts_values[0]);
 						}
 					}
-					else
-						tuple_is_valid = false;
+					else // BUFFER IS FILLED
+					{
+						elog(WARNING, "COMMIT");
+						ReleaseCurrentSubTransaction();
+						MemoryContextSwitchTo(pertuple_cxt);
+						CurrentResourceOwner = oldowner;
+
+						begin_subtransaction = true;
+						replay_is_active = true;
+						// skip_row = true; !!!
+					}
 				}
-				else
+				else // REPLAYING
 				{
 					if (replayed_tuples < saved_tuples)
 					{
@@ -946,7 +944,7 @@ CopyFrom(CopyFromState cstate)
 
 						replayed_tuples++;
 					}
-					else
+					else // BUFFER IS REPLAYED
 					{
 						/* clean replay_buffer */
 						MemoryContextSwitchTo(replay_cxt);
@@ -961,6 +959,7 @@ CopyFrom(CopyFromState cstate)
 						replayed_tuples = 0;
 
 						replay_is_active = false;
+						// skip_row = true; // for skip this iteration, because myslot is empty, doesn't work (create new var for this)
 					}
 					elog(WARNING, "REPLAYING, saved_tuples = %d, replayed_tuples = %d, myslot_values = %ld", saved_tuples, replayed_tuples, myslot->tts_values[0]);
 				}
@@ -974,20 +973,22 @@ CopyFrom(CopyFromState cstate)
 				{
 					case ERRCODE_BAD_COPY_FILE_FORMAT:
 					case ERRCODE_INVALID_TEXT_REPRESENTATION:
-						tuple_is_valid = false;
-						elog(WARNING, "%s", errdata->context);
 
+						elog(WARNING, "%s", errdata->context);
+						elog(WARNING, "TUPLE IS NOT VALID");
 						elog(WARNING, "ROLLBACK");
 						RollbackAndReleaseCurrentSubTransaction();
 						MemoryContextSwitchTo(pertuple_cxt);
 						CurrentResourceOwner = oldowner;
 
-						ExecClearTuple(myslot);
+						ExecClearTuple(myslot); // нужно ли?
 						MemSet(myslot->tts_values, 0, cstate->attr_count * sizeof(Datum));
 						MemSet(myslot->tts_isnull, true, cstate->attr_count * sizeof(bool));
 
+						// skip_row = true;
 						begin_subtransaction = true;
 						break;
+
 					default:
 						MemoryContextSwitchTo(errcxt);
 						PG_RE_THROW();
@@ -999,20 +1000,35 @@ CopyFrom(CopyFromState cstate)
 			}
 			PG_END_TRY();
 
+			if (skip_row)
+				continue;
+
 			if (!valid_row)
 			{
-				elog(WARNING, "COMMIT");
-				ReleaseCurrentSubTransaction(); // нужно
-				MemoryContextSwitchTo(pertuple_cxt);
-				CurrentResourceOwner = oldowner;
-				break;
+				if (!valid_row)
+					elog(WARNING, "valid_row = false");
+				if (replayed_tuples < saved_tuples && !last_replaying)
+					{
+						elog(WARNING, "COMMIT");
+
+						ReleaseCurrentSubTransaction(); // нужно
+						MemoryContextSwitchTo(replay_cxt);
+						CurrentResourceOwner = replay_owner;
+
+						elog(WARNING, "END COMMIT LAST LINE");
+
+						replay_is_active = true;
+						last_replaying = true;
+
+						continue;
+					}
+				else
+				{
+					MemoryContextSwitchTo(pertuple_cxt);
+					CurrentResourceOwner = oldowner;
+					break;
+				}
 			}
-
-			// if (replay_is_active) // чтобы убрать нулевые строки
-			// 	continue;
-
-			if (!tuple_is_valid)
-				continue;
 		}
 		else
 		{
