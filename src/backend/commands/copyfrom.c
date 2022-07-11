@@ -552,7 +552,9 @@ CopyFrom(CopyFromState cstate)
 	/* variables for copy_ignore_errors option */
 #define			REPLAY_BUFFER_SIZE 3
 	HeapTuple		replay_buffer[REPLAY_BUFFER_SIZE];
-	MemoryContext   replay_cxt, pertuple_cxt;
+	MemoryContext   replay_cxt = CurrentMemoryContext;
+	MemoryContext   pertuple_cxt = CurrentResourceOwner;
+	ResourceOwner   replay_owner;
 	bool			begin_subtransaction = true;
 	bool			replay_is_active;  /* turn on after replay_buffer is full */
 	int 			saved_tuples = 0;  /* tuples in replay_buffer */
@@ -878,6 +880,7 @@ CopyFrom(CopyFromState cstate)
 
 			// MemoryContext ccxt = CurrentMemoryContext;
 			ResourceOwner oldowner = CurrentResourceOwner;
+			replay_owner = CurrentResourceOwner;
 
 			PG_TRY();
 			{
@@ -893,15 +896,22 @@ CopyFrom(CopyFromState cstate)
 						BeginInternalSubTransaction(NULL);
 						MemoryContextSwitchTo(pertuple_cxt);
 						CurrentResourceOwner = oldowner;
+						// CurrentResourceOwner = replay_owner;
 					}
 
 					valid_row = NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull);
 					if (valid_row)
 					{
+						MemoryContextSwitchTo(replay_cxt);
+						CurrentResourceOwner = replay_owner;
+
 						tuple = heap_form_tuple(RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
 						copied_tuple = heap_copytuple(tuple);
 
-						if (saved_tuples < REPLAY_BUFFER_SIZE) // вычитаем 1 чтобы ...
+						MemoryContextSwitchTo(pertuple_cxt);
+						CurrentResourceOwner = oldowner;
+
+						if (saved_tuples < REPLAY_BUFFER_SIZE - 1) // вычитаем 1 чтобы ...
 						{
 							replay_buffer[saved_tuples++] = copied_tuple;
 							begin_subtransaction = false;
@@ -926,9 +936,13 @@ CopyFrom(CopyFromState cstate)
 					if (replayed_tuples < saved_tuples)
 					{
 						/* flush tuple to slot*/
-						// MemoryContextSwitchTo(replay_cxt);
-						// heap_deform_tuple(replay_buffer[replayed_tuples], RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
-						// MemoryContextSwitchTo(pertuple_cxt);
+						MemoryContextSwitchTo(replay_cxt);
+						CurrentResourceOwner = replay_owner;
+
+						heap_deform_tuple(replay_buffer[replayed_tuples], RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
+
+						MemoryContextSwitchTo(pertuple_cxt);
+						CurrentResourceOwner = oldowner;
 
 						replayed_tuples++;
 					}
@@ -936,8 +950,13 @@ CopyFrom(CopyFromState cstate)
 					{
 						/* clean replay_buffer */
 						MemoryContextSwitchTo(replay_cxt);
+						CurrentResourceOwner = replay_owner;
+
 						MemSet(replay_buffer, NULL, REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
+
 						MemoryContextSwitchTo(pertuple_cxt);
+						CurrentResourceOwner = oldowner;
+
 						saved_tuples = 0;
 						replayed_tuples = 0;
 
@@ -970,7 +989,7 @@ CopyFrom(CopyFromState cstate)
 						begin_subtransaction = true;
 						break;
 					default:
-						// MemoryContextSwitchTo(errcxt); ??
+						MemoryContextSwitchTo(errcxt);
 						PG_RE_THROW();
 				}
 
