@@ -557,6 +557,7 @@ CopyFrom(CopyFromState cstate)
 	MemoryContext   pertuple_cxt;
 	ResourceOwner   replay_owner, oldowner;
 	bool			begin_subtransaction = true;
+	bool            find_error = false;
 	bool			replay_is_active;  /* turn on after replay_buffer is full */
 	int 			saved_tuples = 0;  /* tuples in replay_buffer */
 	int				replayed_tuples = 0;  /* tuples replayed to table */
@@ -882,14 +883,16 @@ CopyFrom(CopyFromState cstate)
 			oldowner = CurrentResourceOwner;
 			replay_owner = CurrentResourceOwner;
 
+			if (insertMethod == CIM_SINGLE)
+				elog(WARNING, "CIM_SINGLE");
+
 			PG_TRY();
 			{
-				elog(WARNING, "iteration = %d, processed = %ld\n", iterations, processed);
+				elog(WARNING, "\niteration = %d, processed = %ld", iterations, processed);
 				iterations++;
 
 				if (!replay_is_active) // REPLAY IS NOT ACTIVE
 				{
-					elog(WARNING, "NOT REPLAYING");
 					if (begin_subtransaction)
 					{
 						elog(WARNING, "BEGIN");
@@ -897,6 +900,8 @@ CopyFrom(CopyFromState cstate)
 						MemoryContextSwitchTo(pertuple_cxt);
 						CurrentResourceOwner = oldowner;
 					}
+
+					elog(WARNING, "READING ROWS");
 					if (saved_tuples < REPLAY_BUFFER_SIZE) // FILLING BUFFER
 					{
 						valid_row = NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull);
@@ -914,11 +919,14 @@ CopyFrom(CopyFromState cstate)
 							replay_buffer[saved_tuples++] = copied_tuple;
 							begin_subtransaction = false;
 
+							if (find_error && insertMethod == CIM_SINGLE)
+								skip_row = true;
 							elog(WARNING, "saved_tuples = %d, myslot_values = %ld", saved_tuples, myslot->tts_values[0]);
 						}
 					}
-					else // BUFFER IS FILLED
+					else // BUFFER WAS FILLED -> COMMIT
 					{
+						elog(WARNING, "BUFFER WAS FILLED");
 						elog(WARNING, "COMMIT");
 						ReleaseCurrentSubTransaction();
 						MemoryContextSwitchTo(pertuple_cxt);
@@ -926,13 +934,18 @@ CopyFrom(CopyFromState cstate)
 
 						begin_subtransaction = true;
 						replay_is_active = true;
-						// skip_row = true; !!!
+						skip_row = true;
+
+						// ExecClearTuple(myslot); // нужно ли?
+						// MemSet(myslot->tts_values, 0, cstate->attr_count * sizeof(Datum));
+						// MemSet(myslot->tts_isnull, true, cstate->attr_count * sizeof(bool));
 					}
 				}
 				else // REPLAYING
 				{
-					if (replayed_tuples < saved_tuples)
+					if (replayed_tuples < saved_tuples && insertMethod == CIM_SINGLE && find_error)
 					{
+						elog(WARNING, "REPLAYING");
 						/* flush tuple to slot*/
 						MemoryContextSwitchTo(replay_cxt);
 						CurrentResourceOwner = replay_owner;
@@ -944,8 +957,9 @@ CopyFrom(CopyFromState cstate)
 
 						replayed_tuples++;
 					}
-					else // BUFFER IS REPLAYED
+					else // BUFFER WAS REPLAYED
 					{
+						elog(WARNING, "BUFFER WAS REPLAYED");
 						/* clean replay_buffer */
 						MemoryContextSwitchTo(replay_cxt);
 						CurrentResourceOwner = replay_owner;
@@ -958,10 +972,11 @@ CopyFrom(CopyFromState cstate)
 						saved_tuples = 0;
 						replayed_tuples = 0;
 
+						find_error = false;
 						replay_is_active = false;
-						// skip_row = true; // for skip this iteration, because myslot is empty, doesn't work (create new var for this)
+						skip_row = true;
 					}
-					elog(WARNING, "REPLAYING, saved_tuples = %d, replayed_tuples = %d, myslot_values = %ld", saved_tuples, replayed_tuples, myslot->tts_values[0]);
+					elog(WARNING, "saved_tuples = %d, replayed_tuples = %d, myslot_values = %ld", saved_tuples, replayed_tuples, myslot->tts_values[0]);
 				}
 			}
 			PG_CATCH();
@@ -981,11 +996,12 @@ CopyFrom(CopyFromState cstate)
 						MemoryContextSwitchTo(pertuple_cxt);
 						CurrentResourceOwner = oldowner;
 
-						ExecClearTuple(myslot); // нужно ли?
-						MemSet(myslot->tts_values, 0, cstate->attr_count * sizeof(Datum));
-						MemSet(myslot->tts_isnull, true, cstate->attr_count * sizeof(bool));
+						// ExecClearTuple(myslot); // нужно ли?
+						// MemSet(myslot->tts_values, 0, cstate->attr_count * sizeof(Datum));
+						// MemSet(myslot->tts_isnull, true, cstate->attr_count * sizeof(bool));
 
-						// skip_row = true;
+						find_error = true;
+						skip_row = true;
 						begin_subtransaction = true;
 						break;
 
@@ -1000,28 +1016,31 @@ CopyFrom(CopyFromState cstate)
 			}
 			PG_END_TRY();
 
-			if (skip_row)
-				continue;
-
-			if (!valid_row)
+			if (!valid_row) // PROCESSING AFTER LAST ROW
 			{
-				if (!valid_row)
-					elog(WARNING, "valid_row = false");
-				if (replayed_tuples < saved_tuples && !last_replaying)
+				elog(WARNING, "INVALID ROW");
+
+				if (!last_replaying) // IF NOT DO LAST REPLAY YET
+				{
+					elog(WARNING, "LAST COMMIT");
+
+					ReleaseCurrentSubTransaction();
+					MemoryContextSwitchTo(replay_cxt);
+					CurrentResourceOwner = replay_owner;
+
+					if (replayed_tuples < saved_tuples) // BEGIN LAST REPLAYING
 					{
-						elog(WARNING, "COMMIT");
-
-						ReleaseCurrentSubTransaction(); // нужно
-						MemoryContextSwitchTo(replay_cxt);
-						CurrentResourceOwner = replay_owner;
-
-						elog(WARNING, "END COMMIT LAST LINE");
-
 						replay_is_active = true;
 						last_replaying = true;
-
-						continue;
+						skip_tuple = true;
 					}
+					else
+					{
+						MemoryContextSwitchTo(pertuple_cxt);
+						CurrentResourceOwner = oldowner;
+						break;
+					}
+				}
 				else
 				{
 					MemoryContextSwitchTo(pertuple_cxt);
@@ -1029,6 +1048,9 @@ CopyFrom(CopyFromState cstate)
 					break;
 				}
 			}
+
+			if (skip_row)
+				continue;
 		}
 		else
 		{
