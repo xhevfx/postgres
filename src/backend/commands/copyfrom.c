@@ -907,20 +907,24 @@ CopyFrom(CopyFromState cstate)
 						valid_row = NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull);
 						if (valid_row)
 						{
-							MemoryContextSwitchTo(replay_cxt);
-							CurrentResourceOwner = replay_owner;
+							if (insertMethod == CIM_SINGLE)
+							{
+								MemoryContextSwitchTo(replay_cxt);
+								CurrentResourceOwner = replay_owner;
 
-							tuple = heap_form_tuple(RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
-							copied_tuple = heap_copytuple(tuple);
+								tuple = heap_form_tuple(RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
+								copied_tuple = heap_copytuple(tuple);
 
-							MemoryContextSwitchTo(pertuple_cxt);
-							CurrentResourceOwner = oldowner;
+								MemoryContextSwitchTo(pertuple_cxt);
+								CurrentResourceOwner = oldowner;
 
-							replay_buffer[saved_tuples++] = copied_tuple;
+								replay_buffer[saved_tuples++] = copied_tuple;
+
+								if (find_error)
+									skip_row = true;
+							}
+
 							begin_subtransaction = false;
-
-							if (find_error && insertMethod == CIM_SINGLE)
-								skip_row = true;
 							elog(WARNING, "saved_tuples = %d, myslot_values = %ld", saved_tuples, myslot->tts_values[0]);
 						}
 					}
@@ -943,10 +947,10 @@ CopyFrom(CopyFromState cstate)
 				}
 				else // REPLAYING
 				{
-					if (replayed_tuples < saved_tuples && insertMethod == CIM_SINGLE && find_error)
+					if (insertMethod == CIM_SINGLE && find_error && replayed_tuples < saved_tuples)
 					{
 						elog(WARNING, "REPLAYING");
-						/* flush tuple to slot*/
+						// FLUSHING TUPLE TO SLOT
 						MemoryContextSwitchTo(replay_cxt);
 						CurrentResourceOwner = replay_owner;
 
@@ -960,11 +964,12 @@ CopyFrom(CopyFromState cstate)
 					else // BUFFER WAS REPLAYED
 					{
 						elog(WARNING, "BUFFER WAS REPLAYED");
-						/* clean replay_buffer */
+
+						// CLEANING REPLAY BUFFER
 						MemoryContextSwitchTo(replay_cxt);
 						CurrentResourceOwner = replay_owner;
 
-						MemSet(replay_buffer, NULL, REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
+						MemSet(replay_buffer, 0, REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
 
 						MemoryContextSwitchTo(pertuple_cxt);
 						CurrentResourceOwner = oldowner;
@@ -989,9 +994,9 @@ CopyFrom(CopyFromState cstate)
 					case ERRCODE_BAD_COPY_FILE_FORMAT:
 					case ERRCODE_INVALID_TEXT_REPRESENTATION:
 
-						elog(WARNING, "%s", errdata->context);
 						elog(WARNING, "TUPLE IS NOT VALID");
 						elog(WARNING, "ROLLBACK");
+						elog(WARNING, "%s", errdata->context);
 						RollbackAndReleaseCurrentSubTransaction();
 						MemoryContextSwitchTo(pertuple_cxt);
 						CurrentResourceOwner = oldowner;
@@ -1003,6 +1008,7 @@ CopyFrom(CopyFromState cstate)
 						find_error = true;
 						skip_row = true;
 						begin_subtransaction = true;
+
 						break;
 
 					default:
@@ -1016,7 +1022,7 @@ CopyFrom(CopyFromState cstate)
 			}
 			PG_END_TRY();
 
-			if (!valid_row) // PROCESSING AFTER LAST ROW
+			if (!valid_row) // PROCESSING AFTER READING LAST ROW
 			{
 				elog(WARNING, "INVALID ROW");
 
@@ -1036,6 +1042,7 @@ CopyFrom(CopyFromState cstate)
 					}
 					else
 					{
+						elog(WARNING, "BREAK");
 						MemoryContextSwitchTo(pertuple_cxt);
 						CurrentResourceOwner = oldowner;
 						break;
@@ -1043,6 +1050,7 @@ CopyFrom(CopyFromState cstate)
 				}
 				else
 				{
+					elog(WARNING, "BREAK");
 					MemoryContextSwitchTo(pertuple_cxt);
 					CurrentResourceOwner = oldowner;
 					break;
