@@ -554,7 +554,8 @@ CopyFrom(CopyFromState cstate)
 	HeapTuple		replay_buffer[REPLAY_BUFFER_SIZE];
 	HeapTuple 		tuple, copied_tuple;
 	MemoryContext   replay_cxt = CurrentMemoryContext;
-	ResourceOwner   replay_owner, oldowner;
+	ResourceOwner   replay_owner = CurrentResourceOwner;
+	ResourceOwner   oldowner = CurrentResourceOwner;
 	int 			saved_tuples = 0;
 	int				replayed_tuples = 0;
 	bool			begin_subtransaction = true;
@@ -876,8 +877,6 @@ CopyFrom(CopyFromState cstate)
 		{
 			bool valid_row = true;
 			bool skip_row = false;
-			oldowner = CurrentResourceOwner;
-			replay_owner = CurrentResourceOwner;
 
 			PG_TRY();
 			{
