@@ -553,7 +553,6 @@ CopyFrom(CopyFromState cstate)
 #define			REPLAY_BUFFER_SIZE 3
 	HeapTuple		replay_buffer[REPLAY_BUFFER_SIZE];
 	HeapTuple 		tuple, copied_tuple;
-	MemoryContext   replay_cxt = CurrentMemoryContext;
 	ResourceOwner   oldowner = CurrentResourceOwner;
 	int 			saved_tuples = 0;
 	int				replayed_tuples = 0;
@@ -894,7 +893,7 @@ CopyFrom(CopyFromState cstate)
 						{
 							if (insertMethod == CIM_SINGLE)
 							{
-								MemoryContextSwitchTo(replay_cxt);
+								MemoryContextSwitchTo(oldcontext);
 
 								tuple = heap_form_tuple(RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
 								copied_tuple = heap_copytuple(tuple);
