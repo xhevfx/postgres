@@ -1026,7 +1026,7 @@ CopyFrom(CopyFromState cstate)
 			{
 				elog(WARNING, "INVALID ROW");
 
-				if (!last_replaying) // IF NOT DO LAST REPLAY YET
+				if (!last_replaying) // IF HAVEN'T DONE LAST REPLAY YET
 				{
 					elog(WARNING, "LAST COMMIT");
 
@@ -1038,7 +1038,7 @@ CopyFrom(CopyFromState cstate)
 					{
 						replay_is_active = true;
 						last_replaying = true;
-						skip_tuple = true;
+						skip_row = true;
 					}
 					else
 					{
