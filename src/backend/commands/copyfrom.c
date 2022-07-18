@@ -552,7 +552,7 @@ CopyFrom(CopyFromState cstate)
 	/* variables for copy from ignore_errors option */
 #define			REPLAY_BUFFER_SIZE 3
 	HeapTuple		replay_buffer[REPLAY_BUFFER_SIZE];
-	HeapTuple 		tuple, copied_tuple;
+	HeapTuple 		replay_tuple;
 	ResourceOwner   oldowner = CurrentResourceOwner;
 	int 			saved_tuples = 0;
 	int				replayed_tuples = 0;
@@ -895,9 +895,8 @@ CopyFrom(CopyFromState cstate)
 							{
 								MemoryContextSwitchTo(oldcontext);
 
-								tuple = heap_form_tuple(RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
-								copied_tuple = heap_copytuple(tuple);
-								replay_buffer[saved_tuples++] = copied_tuple;
+								replay_tuple = heap_form_tuple(RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
+								replay_buffer[saved_tuples++] = replay_tuple;
 
 								if (find_error)
 									skip_row = true;
