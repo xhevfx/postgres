@@ -554,7 +554,6 @@ CopyFrom(CopyFromState cstate)
 	HeapTuple		replay_buffer[REPLAY_BUFFER_SIZE];
 	HeapTuple 		tuple, copied_tuple;
 	MemoryContext   replay_cxt = CurrentMemoryContext;
-	ResourceOwner   replay_owner = CurrentResourceOwner;
 	ResourceOwner   oldowner = CurrentResourceOwner;
 	int 			saved_tuples = 0;
 	int				replayed_tuples = 0;
@@ -885,8 +884,7 @@ CopyFrom(CopyFromState cstate)
 					if (begin_subtransaction)
 					{
 						BeginInternalSubTransaction(NULL);
-						// MemoryContextSwitchTo(oldcontext); // не нужен
-						CurrentResourceOwner = oldowner; // нужен
+						CurrentResourceOwner = oldowner;
 					}
 
 					if (saved_tuples < REPLAY_BUFFER_SIZE)
@@ -896,15 +894,10 @@ CopyFrom(CopyFromState cstate)
 						{
 							if (insertMethod == CIM_SINGLE)
 							{
-								MemoryContextSwitchTo(replay_cxt); // нужен
-								// CurrentResourceOwner = replay_owner; // не нужен
+								MemoryContextSwitchTo(replay_cxt);
 
 								tuple = heap_form_tuple(RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
 								copied_tuple = heap_copytuple(tuple);
-
-								// MemoryContextSwitchTo(oldcontext); // не нужен
-								// CurrentResourceOwner = oldowner; // не нужен
-
 								replay_buffer[saved_tuples++] = copied_tuple;
 
 								if (find_error)
@@ -917,8 +910,6 @@ CopyFrom(CopyFromState cstate)
 					else
 					{
 						ReleaseCurrentSubTransaction();
-						// MemoryContextSwitchTo(oldcontext); // не нужен
-						// CurrentResourceOwner = oldowner; // не нужен
 
 						begin_subtransaction = true;
 						replay_is_active = true;
@@ -929,24 +920,12 @@ CopyFrom(CopyFromState cstate)
 				{
 					if (insertMethod == CIM_SINGLE && find_error && replayed_tuples < saved_tuples)
 					{
-						// MemoryContextSwitchTo(replay_cxt); // не нужен
-						// CurrentResourceOwner = replay_owner; // не нужен
-
 						heap_deform_tuple(replay_buffer[replayed_tuples], RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
-
-						// MemoryContextSwitchTo(oldcontext); // не нужен
-						// CurrentResourceOwner = oldowner; // не нужен
-
 						replayed_tuples++;
 					}
 					else
 					{
-						// MemoryContextSwitchTo(replay_cxt); // не нужен
-						// CurrentResourceOwner = replay_owner; // не нужен
-
 						MemSet(replay_buffer, 0, REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
-						// MemoryContextSwitchTo(oldcontext); // не нужен
-						// CurrentResourceOwner = oldowner; // не нужен
 
 						saved_tuples = 0;
 						replayed_tuples = 0;
@@ -959,9 +938,8 @@ CopyFrom(CopyFromState cstate)
 			PG_CATCH();
 			{
 				ErrorData *errdata;
-				// MemoryContext errcxt = MemoryContextSwitchTo(oldcontext); // нужен
-				MemoryContextSwitchTo(oldcontext); // можно заменить
-				errdata = CopyErrorData(); // нельзя переносить
+				MemoryContextSwitchTo(oldcontext);
+				errdata = CopyErrorData();
 
 				switch (errdata->sqlerrcode)
 				{
@@ -969,8 +947,6 @@ CopyFrom(CopyFromState cstate)
 					case ERRCODE_INVALID_TEXT_REPRESENTATION:
 						elog(WARNING, "%s", errdata->context);
 						RollbackAndReleaseCurrentSubTransaction();
-						// MemoryContextSwitchTo(oldcontext); // не нужен
-						// CurrentResourceOwner = oldowner; // не нужен
 
 						find_error = true;
 						skip_row = true;
@@ -978,7 +954,6 @@ CopyFrom(CopyFromState cstate)
 						break;
 
 					default:
-						// MemoryContextSwitchTo(errcxt); // не нужен
 						PG_RE_THROW();
 				}
 
@@ -993,8 +968,7 @@ CopyFrom(CopyFromState cstate)
 				if (!last_replaying)
 				{
 					ReleaseCurrentSubTransaction();
-					// MemoryContextSwitchTo(replay_cxt); // не нужен
-					CurrentResourceOwner = replay_owner; // нужен для copy91
+					CurrentResourceOwner = oldowner;
 
 					if (replayed_tuples < saved_tuples)
 					{
@@ -1004,15 +978,11 @@ CopyFrom(CopyFromState cstate)
 					}
 					else
 					{
-						// MemoryContextSwitchTo(oldcontext); // не нужен
-						// CurrentResourceOwner = oldowner; // не нужен
 						break;
 					}
 				}
 				else
 				{
-					// MemoryContextSwitchTo(oldcontext); // не нужен
-					// CurrentResourceOwner = oldowner; // не нужен
 					break;
 				}
 			}
