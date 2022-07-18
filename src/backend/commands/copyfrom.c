@@ -535,6 +535,7 @@ CopyFrom(CopyFromState cstate)
 	ExprContext *econtext;
 	TupleTableSlot *singleslot = NULL;
 	MemoryContext oldcontext = CurrentMemoryContext;
+	ResourceOwner oldowner = CurrentResourceOwner;
 
 	PartitionTupleRouting *proute = NULL;
 	ErrorContextCallback errcallback;
@@ -553,12 +554,11 @@ CopyFrom(CopyFromState cstate)
 #define			REPLAY_BUFFER_SIZE 3
 	HeapTuple		replay_buffer[REPLAY_BUFFER_SIZE];
 	HeapTuple 		replay_tuple;
-	ResourceOwner   oldowner = CurrentResourceOwner;
 	int 			saved_tuples = 0;
 	int				replayed_tuples = 0;
+	bool			replay_is_active = false;
 	bool			begin_subtransaction = true;
 	bool            find_error = false;
-	bool			replay_is_active;
 	bool			last_replaying = false;
 
 	Assert(cstate->rel);
@@ -909,8 +909,8 @@ CopyFrom(CopyFromState cstate)
 					{
 						ReleaseCurrentSubTransaction();
 
-						begin_subtransaction = true;
 						replay_is_active = true;
+						begin_subtransaction = true;
 						skip_row = true;
 					}
 				}
@@ -924,11 +924,11 @@ CopyFrom(CopyFromState cstate)
 					else
 					{
 						MemSet(replay_buffer, 0, REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
-
 						saved_tuples = 0;
 						replayed_tuples = 0;
-						find_error = false;
+
 						replay_is_active = false;
+						find_error = false;
 						skip_row = true;
 					}
 				}
@@ -943,12 +943,13 @@ CopyFrom(CopyFromState cstate)
 				{
 					case ERRCODE_BAD_COPY_FILE_FORMAT:
 					case ERRCODE_INVALID_TEXT_REPRESENTATION:
-						elog(WARNING, "%s", errdata->context);
 						RollbackAndReleaseCurrentSubTransaction();
+						elog(WARNING, "%s", errdata->context);
 
+						begin_subtransaction = true;
 						find_error = true;
 						skip_row = true;
-						begin_subtransaction = true;
+
 						break;
 
 					default:
@@ -971,18 +972,14 @@ CopyFrom(CopyFromState cstate)
 					if (replayed_tuples < saved_tuples)
 					{
 						replay_is_active = true;
-						last_replaying = true;
 						skip_row = true;
+						last_replaying = true;
 					}
 					else
-					{
 						break;
-					}
 				}
 				else
-				{
 					break;
-				}
 			}
 
 			if (skip_row)

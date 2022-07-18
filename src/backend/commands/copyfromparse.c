@@ -939,10 +939,9 @@ NextCopyFrom(CopyFromState cstate, ExprContext *econtext,
 			cstate->cur_attname = NameStr(att->attname);
 			cstate->cur_attval = string;
 			values[m] = InputFunctionCall(&in_functions[m],
-										string,
-										typioparams[m],
-										att->atttypmod);
-
+										  string,
+										  typioparams[m],
+										  att->atttypmod);
 			if (string != NULL)
 				nulls[m] = false;
 			cstate->cur_attname = NULL;
@@ -1491,12 +1490,10 @@ CopyReadAttributesText(CopyFromState cstate)
 	if (cstate->max_fields <= 0)
 	{
 		if (cstate->line_buf.len != 0)
-		{
 			ereport(ERROR,
 					(errcode(ERRCODE_BAD_COPY_FILE_FORMAT),
-					errmsg("extra data after last expected column")));
-			return 0;
-		}
+					 errmsg("extra data after last expected column")));
+		return 0;
 	}
 
 	resetStringInfo(&cstate->attribute_buf);
