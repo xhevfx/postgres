@@ -554,7 +554,6 @@ CopyFrom(CopyFromState cstate)
 	HeapTuple		replay_buffer[REPLAY_BUFFER_SIZE];
 	HeapTuple 		tuple, copied_tuple;
 	MemoryContext   replay_cxt = CurrentMemoryContext;
-	MemoryContext   pertuple_cxt;
 	ResourceOwner   replay_owner, oldowner;
 	int 			saved_tuples = 0;
 	int				replayed_tuples = 0;
@@ -877,7 +876,6 @@ CopyFrom(CopyFromState cstate)
 		{
 			bool valid_row = true;
 			bool skip_row = false;
-			pertuple_cxt = GetPerTupleMemoryContext(estate);
 			oldowner = CurrentResourceOwner;
 			replay_owner = CurrentResourceOwner;
 
@@ -888,7 +886,7 @@ CopyFrom(CopyFromState cstate)
 					if (begin_subtransaction)
 					{
 						BeginInternalSubTransaction(NULL);
-						MemoryContextSwitchTo(pertuple_cxt);
+						MemoryContextSwitchTo(oldcontext);
 						CurrentResourceOwner = oldowner;
 					}
 
@@ -905,7 +903,7 @@ CopyFrom(CopyFromState cstate)
 								tuple = heap_form_tuple(RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
 								copied_tuple = heap_copytuple(tuple);
 
-								MemoryContextSwitchTo(pertuple_cxt);
+								MemoryContextSwitchTo(oldcontext);
 								CurrentResourceOwner = oldowner;
 
 								replay_buffer[saved_tuples++] = copied_tuple;
@@ -920,7 +918,7 @@ CopyFrom(CopyFromState cstate)
 					else
 					{
 						ReleaseCurrentSubTransaction();
-						MemoryContextSwitchTo(pertuple_cxt);
+						MemoryContextSwitchTo(oldcontext);
 						CurrentResourceOwner = oldowner;
 
 						begin_subtransaction = true;
@@ -937,7 +935,7 @@ CopyFrom(CopyFromState cstate)
 
 						heap_deform_tuple(replay_buffer[replayed_tuples], RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
 
-						MemoryContextSwitchTo(pertuple_cxt);
+						MemoryContextSwitchTo(oldcontext);
 						CurrentResourceOwner = oldowner;
 
 						replayed_tuples++;
@@ -948,7 +946,7 @@ CopyFrom(CopyFromState cstate)
 						CurrentResourceOwner = replay_owner;
 
 						MemSet(replay_buffer, 0, REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
-						MemoryContextSwitchTo(pertuple_cxt);
+						MemoryContextSwitchTo(oldcontext);
 
 						CurrentResourceOwner = oldowner;
 
@@ -962,7 +960,7 @@ CopyFrom(CopyFromState cstate)
 			}
 			PG_CATCH();
 			{
-				MemoryContext errcxt = MemoryContextSwitchTo(pertuple_cxt);
+				MemoryContext errcxt = MemoryContextSwitchTo(oldcontext);
 				ErrorData *errdata = CopyErrorData();
 
 				switch (errdata->sqlerrcode)
@@ -971,7 +969,7 @@ CopyFrom(CopyFromState cstate)
 					case ERRCODE_INVALID_TEXT_REPRESENTATION:
 						elog(WARNING, "%s", errdata->context);
 						RollbackAndReleaseCurrentSubTransaction();
-						MemoryContextSwitchTo(pertuple_cxt);
+						MemoryContextSwitchTo(oldcontext);
 						CurrentResourceOwner = oldowner;
 
 						find_error = true;
@@ -1006,14 +1004,14 @@ CopyFrom(CopyFromState cstate)
 					}
 					else
 					{
-						MemoryContextSwitchTo(pertuple_cxt);
+						MemoryContextSwitchTo(oldcontext);
 						CurrentResourceOwner = oldowner;
 						break;
 					}
 				}
 				else
 				{
-					MemoryContextSwitchTo(pertuple_cxt);
+					MemoryContextSwitchTo(oldcontext);
 					CurrentResourceOwner = oldowner;
 					break;
 				}
