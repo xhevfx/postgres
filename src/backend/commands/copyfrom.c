@@ -885,8 +885,8 @@ CopyFrom(CopyFromState cstate)
 					if (begin_subtransaction)
 					{
 						BeginInternalSubTransaction(NULL);
-						MemoryContextSwitchTo(oldcontext);
-						CurrentResourceOwner = oldowner;
+						// MemoryContextSwitchTo(oldcontext); // не нужен
+						CurrentResourceOwner = oldowner; // нужен
 					}
 
 					if (saved_tuples < REPLAY_BUFFER_SIZE)
@@ -896,14 +896,14 @@ CopyFrom(CopyFromState cstate)
 						{
 							if (insertMethod == CIM_SINGLE)
 							{
-								MemoryContextSwitchTo(replay_cxt);
-								CurrentResourceOwner = replay_owner;
+								MemoryContextSwitchTo(replay_cxt); // нужен
+								// CurrentResourceOwner = replay_owner; // не нужен
 
 								tuple = heap_form_tuple(RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
 								copied_tuple = heap_copytuple(tuple);
 
-								MemoryContextSwitchTo(oldcontext);
-								CurrentResourceOwner = oldowner;
+								// MemoryContextSwitchTo(oldcontext); // не нужен
+								// CurrentResourceOwner = oldowner; // не нужен
 
 								replay_buffer[saved_tuples++] = copied_tuple;
 
@@ -917,8 +917,8 @@ CopyFrom(CopyFromState cstate)
 					else
 					{
 						ReleaseCurrentSubTransaction();
-						MemoryContextSwitchTo(oldcontext);
-						CurrentResourceOwner = oldowner;
+						// MemoryContextSwitchTo(oldcontext); // не нужен
+						// CurrentResourceOwner = oldowner; // не нужен
 
 						begin_subtransaction = true;
 						replay_is_active = true;
@@ -929,25 +929,24 @@ CopyFrom(CopyFromState cstate)
 				{
 					if (insertMethod == CIM_SINGLE && find_error && replayed_tuples < saved_tuples)
 					{
-						MemoryContextSwitchTo(replay_cxt);
-						CurrentResourceOwner = replay_owner;
+						// MemoryContextSwitchTo(replay_cxt); // не нужен
+						// CurrentResourceOwner = replay_owner; // не нужен
 
 						heap_deform_tuple(replay_buffer[replayed_tuples], RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
 
-						MemoryContextSwitchTo(oldcontext);
-						CurrentResourceOwner = oldowner;
+						// MemoryContextSwitchTo(oldcontext); // не нужен
+						// CurrentResourceOwner = oldowner; // не нужен
 
 						replayed_tuples++;
 					}
 					else
 					{
-						MemoryContextSwitchTo(replay_cxt);
-						CurrentResourceOwner = replay_owner;
+						// MemoryContextSwitchTo(replay_cxt); // не нужен
+						// CurrentResourceOwner = replay_owner; // не нужен
 
 						MemSet(replay_buffer, 0, REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
-						MemoryContextSwitchTo(oldcontext);
-
-						CurrentResourceOwner = oldowner;
+						// MemoryContextSwitchTo(oldcontext); // не нужен
+						// CurrentResourceOwner = oldowner; // не нужен
 
 						saved_tuples = 0;
 						replayed_tuples = 0;
@@ -959,8 +958,10 @@ CopyFrom(CopyFromState cstate)
 			}
 			PG_CATCH();
 			{
-				MemoryContext errcxt = MemoryContextSwitchTo(oldcontext);
-				ErrorData *errdata = CopyErrorData();
+				ErrorData *errdata;
+				// MemoryContext errcxt = MemoryContextSwitchTo(oldcontext); // нужен
+				MemoryContextSwitchTo(oldcontext); // можно заменить
+				errdata = CopyErrorData(); // нельзя переносить
 
 				switch (errdata->sqlerrcode)
 				{
@@ -968,8 +969,8 @@ CopyFrom(CopyFromState cstate)
 					case ERRCODE_INVALID_TEXT_REPRESENTATION:
 						elog(WARNING, "%s", errdata->context);
 						RollbackAndReleaseCurrentSubTransaction();
-						MemoryContextSwitchTo(oldcontext);
-						CurrentResourceOwner = oldowner;
+						// MemoryContextSwitchTo(oldcontext); // не нужен
+						// CurrentResourceOwner = oldowner; // не нужен
 
 						find_error = true;
 						skip_row = true;
@@ -977,7 +978,7 @@ CopyFrom(CopyFromState cstate)
 						break;
 
 					default:
-						MemoryContextSwitchTo(errcxt);
+						// MemoryContextSwitchTo(errcxt); // не нужен
 						PG_RE_THROW();
 				}
 
@@ -992,8 +993,8 @@ CopyFrom(CopyFromState cstate)
 				if (!last_replaying)
 				{
 					ReleaseCurrentSubTransaction();
-					MemoryContextSwitchTo(replay_cxt);
-					CurrentResourceOwner = replay_owner;
+					// MemoryContextSwitchTo(replay_cxt); // не нужен
+					CurrentResourceOwner = replay_owner; // нужен для copy91
 
 					if (replayed_tuples < saved_tuples)
 					{
@@ -1003,15 +1004,15 @@ CopyFrom(CopyFromState cstate)
 					}
 					else
 					{
-						MemoryContextSwitchTo(oldcontext);
-						CurrentResourceOwner = oldowner;
+						// MemoryContextSwitchTo(oldcontext); // не нужен
+						// CurrentResourceOwner = oldowner; // не нужен
 						break;
 					}
 				}
 				else
 				{
-					MemoryContextSwitchTo(oldcontext);
-					CurrentResourceOwner = oldowner;
+					// MemoryContextSwitchTo(oldcontext); // не нужен
+					// CurrentResourceOwner = oldowner; // не нужен
 					break;
 				}
 			}
