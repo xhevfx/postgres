@@ -454,7 +454,7 @@ test1
 SELECT * FROM instead_of_insert_tbl;
 COMMIT;
 
--- test IGNORE_ERRORS option
+-- tests for IGNORE_ERRORS option
 CREATE TABLE check_ign_err (n int, m int, k int);
 COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS;
 1	1	1
@@ -476,13 +476,6 @@ COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS;
 1	1	1
 2	a	2
 3	3	3
-\.
-SELECT * FROM check_ign_err;
-
-DROP TABLE check_ign_err;
-CREATE TABLE check_ign_err();
-COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS;
-1 1	1
 \.
 SELECT * FROM check_ign_err;
 

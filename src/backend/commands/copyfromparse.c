@@ -866,7 +866,6 @@ NextCopyFrom(CopyFromState cstate, ExprContext *econtext,
 	tupDesc = RelationGetDescr(cstate->rel);
 	num_phys_attrs = tupDesc->natts;
 	attr_count = list_length(cstate->attnumlist);
-	cstate->attr_count = attr_count;
 
 	/* Initialize all values for row to NULL */
 	MemSet(values, 0, num_phys_attrs * sizeof(Datum));
@@ -1493,15 +1492,10 @@ CopyReadAttributesText(CopyFromState cstate)
 	{
 		if (cstate->line_buf.len != 0)
 		{
-			if (cstate->opts.ignore_errors)
-				ereport(ERROR,
-					(errcode(ERRCODE_FOR_IGNORE_ERRORS),
-					 errmsg("extra data after last expected column")));
-			else
-				ereport(ERROR,
-						(errcode(ERRCODE_BAD_COPY_FILE_FORMAT),
-						errmsg("extra data after last expected column")));
-		return 0;
+			ereport(ERROR,
+					(errcode(ERRCODE_BAD_COPY_FILE_FORMAT),
+					errmsg("extra data after last expected column")));
+			return 0;
 		}
 	}
 
