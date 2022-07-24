@@ -1961,6 +1961,19 @@ include_dir 'conf.d'
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-logical-decoding-work-mem" xreflabel="replay_buffer_size">
+      <term><varname>replay_buffer_size</varname> (<type>integer</type>)
+      <indexterm>
+       <primary><varname>replay_buffer_size</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Specifies size of buffer for COPY FROM IGNORE_ERRORS option.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-max-stack-depth" xreflabel="max_stack_depth">
       <term><varname>max_stack_depth</varname> (<type>integer</type>)
       <indexterm>

@@ -19,6 +19,9 @@
 #include "parser/parse_node.h"
 #include "tcop/dest.h"
 
+/* User-settable GUC parameters */
+int			replay_buffer_size;
+
 /*
  * Represents whether a header line should be present, and whether it must
  * match the actual names (which implies "true").
