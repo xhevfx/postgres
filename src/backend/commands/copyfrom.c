@@ -555,6 +555,7 @@ CopyFrom(CopyFromState cstate)
 	HeapTuple 		replay_tuple;
 	int 			saved_tuples = 0;
 	int				replayed_tuples = 0;
+	int 			errors = 0;
 	bool			replay_is_active = false;
 	bool			begin_subtransaction = true;
 	bool            find_error = false;
@@ -945,7 +946,9 @@ CopyFrom(CopyFromState cstate)
 					case ERRCODE_BAD_COPY_FILE_FORMAT:
 					case ERRCODE_INVALID_TEXT_REPRESENTATION:
 						RollbackAndReleaseCurrentSubTransaction();
-						elog(WARNING, "%s", errdata->context);
+						errors++;
+						if (errors <= 100)
+							elog(WARNING, "%s", errdata->context);
 
 						begin_subtransaction = true;
 						find_error = true;
