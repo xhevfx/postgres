@@ -1841,6 +1841,9 @@ repeat('Pg', 4) <returnvalue>PgPgPgPg</returnvalue>
    subsequent <function>random()</function> calls in the current session
    can be repeated by re-issuing <function>setseed()</function> with the same
    argument.
+   Without any prior <function>setseed()</function> call in the same
+   session, the first <function>random()</function> call obtains a seed
+   from a platform-dependent source of random bits.
   </para>
 
   <para>
@@ -24975,28 +24978,8 @@ SELECT currval(pg_get_serial_sequence('sometable', 'id'));
         Returns an array of the flags associated with the given GUC, or
         <literal>NULL</literal> if it does not exist. The result is
         an empty array if the GUC exists but there are no flags to show.
-        Only the most useful flags are exposed, as of the following:
-        <simplelist>
-         <member>
-          <literal>EXPLAIN</literal>: parameters included in
-          <command>EXPLAIN (SETTINGS)</command> commands.
-         </member>
-         <member>
-          <literal>NO_SHOW_ALL</literal>: parameters excluded from
-          <command>SHOW ALL</command> commands.
-         </member>
-         <member>
-          <literal>NO_RESET_ALL</literal>: parameters excluded from
-          <command>RESET ALL</command> commands.
-         </member>
-         <member>
-          <literal>NOT_IN_SAMPLE</literal>: parameters not included in
-          <filename>postgresql.conf</filename> by default.
-         </member>
-         <member>
-          <literal>RUNTIME_COMPUTED</literal>: runtime-computed parameters.
-         </member>
-        </simplelist>
+        Only the most useful flags listed in
+        <xref linkend="functions-pg-settings-flags"/> are exposed.
        </para></entry>
       </row>
 
@@ -25398,6 +25381,46 @@ SELECT collation for ('foo' COLLATE "de_DE");
       <entry><literal>can_include</literal></entry>
       <entry>Does the access method support the <literal>INCLUDE</literal>
         clause of <literal>CREATE INDEX</literal>?
+      </entry>
+     </row>
+    </tbody>
+   </tgroup>
+  </table>
+
+  <table id="functions-pg-settings-flags">
+   <title>GUC Flags</title>
+   <tgroup cols="2">
+    <thead>
+     <row><entry>Flag</entry><entry>Description</entry></row>
+    </thead>
+    <tbody>
+     <row>
+      <entry><literal>EXPLAIN</literal></entry>
+      <entry>Parameters with this flag are included in
+       <command>EXPLAIN (SETTINGS)</command> commands.
+      </entry>
+     </row>
+     <row>
+      <entry><literal>NO_SHOW_ALL</literal></entry>
+      <entry>Parameters with this flag are excluded from
+       <command>SHOW ALL</command> commands.
+      </entry>
+     </row>
+     <row>
+      <entry><literal>NO_RESET_ALL</literal></entry>
+      <entry>Parameters with this flag are excluded from
+       <command>RESET ALL</command> commands.
+      </entry>
+     </row>
+     <row>
+      <entry><literal>NOT_IN_SAMPLE</literal></entry>
+      <entry>Parameters with this flag are not included in
+       <filename>postgresql.conf</filename> by default.
+      </entry>
+     </row>
+     <row>
+      <entry><literal>RUNTIME_COMPUTED</literal></entry>
+      <entry>Parameters with this flag are runtime-computed ones.
       </entry>
      </row>
     </tbody>
@@ -28389,12 +28412,22 @@ SELECT pg_size_pretty(sum(pg_relation_size(relid))) AS total_size
    </para>
 
    <para>
+    When granting privilege on these functions, note that the table entries
+    showing optional parameters are mostly implemented as several physical
+    functions with different parameter lists.  Privilege must be granted
+    separately on each such function, if it is to be
+    used.  <application>psql</application>'s <command>\df</command> command
+    can be useful to check what the actual function signatures are.
+   </para>
+
+   <para>
     Some of these functions take an optional <parameter>missing_ok</parameter>
     parameter, which specifies the behavior when the file or directory does
     not exist.  If <literal>true</literal>, the function
     returns <literal>NULL</literal> or an empty result set, as appropriate.
-    If <literal>false</literal>, an error is raised.  The default
-    is <literal>false</literal>.
+    If <literal>false</literal>, an error is raised.  (Failure conditions
+    other than <quote>file not found</quote> are reported as errors in any
+    case.)  The default is <literal>false</literal>.
    </para>
 
    <table id="functions-admin-genfile-table">
@@ -28613,7 +28646,7 @@ SELECT pg_size_pretty(sum(pg_relation_size(relid))) AS total_size
         <indexterm>
          <primary>pg_read_file</primary>
         </indexterm>
-        <function>pg_read_file</function> ( <parameter>filename</parameter> <type>text</type> <optional>, <parameter>offset</parameter> <type>bigint</type>, <parameter>length</parameter> <type>bigint</type> <optional>, <parameter>missing_ok</parameter> <type>boolean</type> </optional></optional> )
+        <function>pg_read_file</function> ( <parameter>filename</parameter> <type>text</type> <optional>, <parameter>offset</parameter> <type>bigint</type>, <parameter>length</parameter> <type>bigint</type> </optional> <optional>, <parameter>missing_ok</parameter> <type>boolean</type> </optional> )
         <returnvalue>text</returnvalue>
        </para>
        <para>
@@ -28638,7 +28671,7 @@ SELECT pg_size_pretty(sum(pg_relation_size(relid))) AS total_size
         <indexterm>
          <primary>pg_read_binary_file</primary>
         </indexterm>
-        <function>pg_read_binary_file</function> ( <parameter>filename</parameter> <type>text</type> <optional>, <parameter>offset</parameter> <type>bigint</type>, <parameter>length</parameter> <type>bigint</type> <optional>, <parameter>missing_ok</parameter> <type>boolean</type> </optional></optional> )
+        <function>pg_read_binary_file</function> ( <parameter>filename</parameter> <type>text</type> <optional>, <parameter>offset</parameter> <type>bigint</type>, <parameter>length</parameter> <type>bigint</type> </optional> <optional>, <parameter>missing_ok</parameter> <type>boolean</type> </optional> )
         <returnvalue>bytea</returnvalue>
        </para>
        <para>

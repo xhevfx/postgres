@@ -487,9 +487,9 @@ static void FindAndDropRelationBuffers(RelFileLocator rlocator,
 									   ForkNumber forkNum,
 									   BlockNumber nForkBlock,
 									   BlockNumber firstDelBlock);
-static void RelationCopyStorageUsingBuffer(Relation src, Relation dst,
-										   ForkNumber forkNum,
-										   bool isunlogged);
+static void RelationCopyStorageUsingBuffer(RelFileLocator srclocator,
+										   RelFileLocator dstlocator,
+										   ForkNumber forkNum, bool permanent);
 static void AtProcExit_Buffers(int code, Datum arg);
 static void CheckForBufferLeaks(void);
 static int	rlocator_comparator(const void *p1, const void *p2);
@@ -515,7 +515,7 @@ PrefetchSharedBuffer(SMgrRelation smgr_reln,
 	Assert(BlockNumberIsValid(blockNum));
 
 	/* create a tag so we can lookup the buffer */
-	INIT_BUFFERTAG(newTag, smgr_reln->smgr_rlocator.locator,
+	InitBufferTag(&newTag, &smgr_reln->smgr_rlocator.locator,
 				   forkNum, blockNum);
 
 	/* determine its hash code and partition lock ID */
@@ -632,22 +632,32 @@ ReadRecentBuffer(RelFileLocator rlocator, ForkNumber forkNum, BlockNumber blockN
 
 	ResourceOwnerEnlargeBuffers(CurrentResourceOwner);
 	ReservePrivateRefCountEntry();
-	INIT_BUFFERTAG(tag, rlocator, forkNum, blockNum);
+	InitBufferTag(&tag, &rlocator, forkNum, blockNum);
 
 	if (BufferIsLocal(recent_buffer))
 	{
-		bufHdr = GetBufferDescriptor(-recent_buffer - 1);
+		int			b = -recent_buffer - 1;
+
+		bufHdr = GetLocalBufferDescriptor(b);
 		buf_state = pg_atomic_read_u32(&bufHdr->state);
 
 		/* Is it still valid and holding the right tag? */
-		if ((buf_state & BM_VALID) && BUFFERTAGS_EQUAL(tag, bufHdr->tag))
+		if ((buf_state & BM_VALID) && BufferTagsEqual(&tag, &bufHdr->tag))
 		{
-			/* Bump local buffer's ref and usage counts. */
+			/*
+			 * Bump buffer's ref and usage counts. This is equivalent of
+			 * PinBuffer for a shared buffer.
+			 */
+			if (LocalRefCount[b] == 0)
+			{
+				if (BUF_STATE_GET_USAGECOUNT(buf_state) < BM_MAX_USAGE_COUNT)
+				{
+					buf_state += BUF_USAGECOUNT_ONE;
+					pg_atomic_unlocked_write_u32(&bufHdr->state, buf_state);
+				}
+			}
+			LocalRefCount[b]++;
 			ResourceOwnerRememberBuffer(CurrentResourceOwner, recent_buffer);
-			LocalRefCount[-recent_buffer - 1]++;
-			if (BUF_STATE_GET_USAGECOUNT(buf_state) < BM_MAX_USAGE_COUNT)
-				pg_atomic_write_u32(&bufHdr->state,
-									buf_state + BUF_USAGECOUNT_ONE);
 
 			pgBufferUsage.local_blks_hit++;
 
@@ -669,7 +679,7 @@ ReadRecentBuffer(RelFileLocator rlocator, ForkNumber forkNum, BlockNumber blockN
 		else
 			buf_state = LockBufHdr(bufHdr);
 
-		if ((buf_state & BM_VALID) && BUFFERTAGS_EQUAL(tag, bufHdr->tag))
+		if ((buf_state & BM_VALID) && BufferTagsEqual(&tag, &bufHdr->tag))
 		{
 			/*
 			 * It's now safe to pin the buffer.  We can't pin first and ask
@@ -1124,7 +1134,7 @@ BufferAlloc(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 	uint32		buf_state;
 
 	/* create a tag so we can lookup the buffer */
-	INIT_BUFFERTAG(newTag, smgr->smgr_rlocator.locator, forkNum, blockNum);
+	InitBufferTag(&newTag, &smgr->smgr_rlocator.locator, forkNum, blockNum);
 
 	/* determine its hash code and partition lock ID */
 	newHash = BufTableHashCode(&newTag);
@@ -1507,7 +1517,7 @@ retry:
 	buf_state = LockBufHdr(buf);
 
 	/* If it's changed while we were waiting for lock, do nothing */
-	if (!BUFFERTAGS_EQUAL(buf->tag, oldTag))
+	if (!BufferTagsEqual(&buf->tag, &oldTag))
 	{
 		UnlockBufHdr(buf, buf_state);
 		LWLockRelease(oldPartitionLock);
@@ -1539,7 +1549,7 @@ retry:
 	 * linear scans of the buffer array don't think the buffer is valid.
 	 */
 	oldFlags = buf_state & BUF_FLAG_MASK;
-	CLEAR_BUFFERTAG(buf->tag);
+	ClearBufferTag(&buf->tag);
 	buf_state &= ~(BUF_FLAG_MASK | BUF_USAGECOUNT_MASK);
 	UnlockBufHdr(buf, buf_state);
 
@@ -3355,7 +3365,7 @@ FindAndDropRelationBuffers(RelFileLocator rlocator, ForkNumber forkNum,
 		uint32		buf_state;
 
 		/* create a tag so we can lookup the buffer */
-		INIT_BUFFERTAG(bufTag, rlocator, forkNum, curBlock);
+		InitBufferTag(&bufTag, &rlocator, forkNum, curBlock);
 
 		/* determine its hash code and partition lock ID */
 		bufHash = BufTableHashCode(&bufTag);
@@ -3691,8 +3701,9 @@ FlushRelationsAllBuffers(SMgrRelation *smgrs, int nrels)
  * --------------------------------------------------------------------
  */
 static void
-RelationCopyStorageUsingBuffer(Relation src, Relation dst, ForkNumber forkNum,
-							   bool permanent)
+RelationCopyStorageUsingBuffer(RelFileLocator srclocator,
+							   RelFileLocator dstlocator,
+							   ForkNumber forkNum, bool permanent)
 {
 	Buffer		srcBuf;
 	Buffer		dstBuf;
@@ -3712,7 +3723,8 @@ RelationCopyStorageUsingBuffer(Relation src, Relation dst, ForkNumber forkNum,
 	use_wal = XLogIsNeeded() && (permanent || forkNum == INIT_FORKNUM);
 
 	/* Get number of blocks in the source relation. */
-	nblocks = smgrnblocks(RelationGetSmgr(src), forkNum);
+	nblocks = smgrnblocks(smgropen(srclocator, InvalidBackendId),
+						  forkNum);
 
 	/* Nothing to copy; just return. */
 	if (nblocks == 0)
@@ -3728,26 +3740,22 @@ RelationCopyStorageUsingBuffer(Relation src, Relation dst, ForkNumber forkNum,
 		CHECK_FOR_INTERRUPTS();
 
 		/* Read block from source relation. */
-		srcBuf = ReadBufferWithoutRelcache(src->rd_locator, forkNum, blkno,
+		srcBuf = ReadBufferWithoutRelcache(srclocator, forkNum, blkno,
 										   RBM_NORMAL, bstrategy_src,
 										   permanent);
+		LockBuffer(srcBuf, BUFFER_LOCK_SHARE);
 		srcPage = BufferGetPage(srcBuf);
-		if (PageIsNew(srcPage) || PageIsEmpty(srcPage))
-		{
-			ReleaseBuffer(srcBuf);
-			continue;
-		}
 
 		/* Use P_NEW to extend the destination relation. */
-		dstBuf = ReadBufferWithoutRelcache(dst->rd_locator, forkNum, P_NEW,
+		dstBuf = ReadBufferWithoutRelcache(dstlocator, forkNum, P_NEW,
 										   RBM_NORMAL, bstrategy_dst,
 										   permanent);
 		LockBuffer(dstBuf, BUFFER_LOCK_EXCLUSIVE);
+		dstPage = BufferGetPage(dstBuf);
 
 		START_CRIT_SECTION();
 
 		/* Copy page data from the source to the destination. */
-		dstPage = BufferGetPage(dstBuf);
 		memcpy(dstPage, srcPage, BLCKSZ);
 		MarkBufferDirty(dstBuf);
 
@@ -3758,7 +3766,7 @@ RelationCopyStorageUsingBuffer(Relation src, Relation dst, ForkNumber forkNum,
 		END_CRIT_SECTION();
 
 		UnlockReleaseBuffer(dstBuf);
-		ReleaseBuffer(srcBuf);
+		UnlockReleaseBuffer(srcBuf);
 	}
 }
 
@@ -3777,23 +3785,12 @@ void
 CreateAndCopyRelationData(RelFileLocator src_rlocator,
 						  RelFileLocator dst_rlocator, bool permanent)
 {
-	Relation	src_rel;
-	Relation	dst_rel;
+	RelFileLocatorBackend rlocator;
 	char		relpersistence;
 
 	/* Set the relpersistence. */
 	relpersistence = permanent ?
 		RELPERSISTENCE_PERMANENT : RELPERSISTENCE_UNLOGGED;
-
-	/*
-	 * We can't use a real relcache entry for a relation in some other
-	 * database, but since we're only going to access the fields related to
-	 * physical storage, a fake one is good enough. If we didn't do this and
-	 * used the smgr layer directly, we would have to worry about
-	 * invalidations.
-	 */
-	src_rel = CreateFakeRelcacheEntry(src_rlocator);
-	dst_rel = CreateFakeRelcacheEntry(dst_rlocator);
 
 	/*
 	 * Create and copy all forks of the relation.  During create database we
@@ -3804,15 +3801,16 @@ CreateAndCopyRelationData(RelFileLocator src_rlocator,
 	RelationCreateStorage(dst_rlocator, relpersistence, false);
 
 	/* copy main fork. */
-	RelationCopyStorageUsingBuffer(src_rel, dst_rel, MAIN_FORKNUM, permanent);
+	RelationCopyStorageUsingBuffer(src_rlocator, dst_rlocator, MAIN_FORKNUM,
+								   permanent);
 
 	/* copy those extra forks that exist */
 	for (ForkNumber forkNum = MAIN_FORKNUM + 1;
 		 forkNum <= MAX_FORKNUM; forkNum++)
 	{
-		if (smgrexists(RelationGetSmgr(src_rel), forkNum))
+		if (smgrexists(smgropen(src_rlocator, InvalidBackendId), forkNum))
 		{
-			smgrcreate(RelationGetSmgr(dst_rel), forkNum, false);
+			smgrcreate(smgropen(dst_rlocator, InvalidBackendId), forkNum, false);
 
 			/*
 			 * WAL log creation if the relation is persistent, or this is the
@@ -3822,14 +3820,19 @@ CreateAndCopyRelationData(RelFileLocator src_rlocator,
 				log_smgrcreate(&dst_rlocator, forkNum);
 
 			/* Copy a fork's data, block by block. */
-			RelationCopyStorageUsingBuffer(src_rel, dst_rel, forkNum,
+			RelationCopyStorageUsingBuffer(src_rlocator, dst_rlocator, forkNum,
 										   permanent);
 		}
 	}
 
-	/* Release fake relcache entries. */
-	FreeFakeRelcacheEntry(src_rel);
-	FreeFakeRelcacheEntry(dst_rel);
+	/* close source and destination smgr if exists. */
+	rlocator.backend = InvalidBackendId;
+
+	rlocator.locator = src_rlocator;
+	smgrcloserellocator(rlocator);
+
+	rlocator.locator = dst_rlocator;
+	smgrcloserellocator(rlocator);
 }
 
 /* ---------------------------------------------------------------------

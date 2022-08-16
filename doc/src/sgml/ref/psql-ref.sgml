@@ -656,7 +656,7 @@ EOF
     of these options are required; there are useful defaults. If you omit the host
     name, <application>psql</application> will connect via a Unix-domain socket
     to a server on the local host, or via TCP/IP to <literal>localhost</literal> on
-    machines that don't have Unix-domain sockets. The default port number is
+    Windows. The default port number is
     determined at compile time.
     Since the database server uses the same default, you will not have
     to specify the port in most cases. The default user name is your
@@ -2838,6 +2838,39 @@ lo_import 152801
           used.  The auto setting is only
           effective in the aligned and wrapped formats.  In other formats, it
           always behaves as if the expanded mode is off.
+          </para>
+          </listitem>
+          </varlistentry>
+
+          <varlistentry>
+          <term><literal>xheader_width</literal></term>
+          <listitem>
+          <para>
+           Sets the maximum width of the header for expanded output to one of
+           <literal>full</literal> (the default value),
+           <literal>column</literal>, <literal>page</literal>, or an
+           <replaceable class="parameter">integer value</replaceable>.
+          </para>
+
+          <para>
+           <literal>full</literal>: the expanded header is not truncated,
+           and will be as wide as the widest output
+           line.
+          </para>
+
+          <para>
+           <literal>column</literal>: truncate the header line at the
+           width of the first column.
+          </para>
+
+          <para>
+           <literal>page</literal>: truncate the header line at the terminal
+           width.
+          </para>
+
+          <para>
+           <replaceable class="parameter">integer value</replaceable>: specify
+           the exact maximum width of the header line.
           </para>
           </listitem>
           </varlistentry>

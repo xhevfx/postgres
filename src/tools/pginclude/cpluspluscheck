@@ -52,6 +52,8 @@ tmp=`mktemp -d /tmp/$me.XXXXXX`
 
 trap 'rm -rf $tmp' 0 1 2 3 15
 
+exit_status=0
+
 # Scan all of src/ and contrib/ for header files.
 for f in `cd "$srcdir" && find src contrib -name '*.h' -print`
 do
@@ -71,6 +73,8 @@ do
 
 	# Additional Windows-specific headers.
 	test "$f" = src/include/port/win32_port.h && continue
+	test "$f" = src/include/port/win32/netdb.h && continue
+	test "$f" = src/include/port/win32/sys/resource.h && continue
 	test "$f" = src/include/port/win32/sys/socket.h && continue
 	test "$f" = src/include/port/win32_msvc/dirent.h && continue
 	test "$f" = src/include/port/win32_msvc/utime.h && continue
@@ -89,10 +93,6 @@ do
 	test "$f" = src/include/port/atomics/generic-gcc.h && continue
 	test "$f" = src/include/port/atomics/generic-msvc.h && continue
 	test "$f" = src/include/port/atomics/generic-sunpro.h && continue
-
-	# rusagestub.h is also platform-specific, and will be included
-	# by utils/pg_rusage.h if necessary.
-	test "$f" = src/include/rusagestub.h && continue
 
 	# sepgsql.h depends on headers that aren't there on most platforms.
 	test "$f" = contrib/sepgsql/sepgsql.h && continue
@@ -169,9 +169,13 @@ do
 	esac
 
 	# Run the test.
-	${CXX:-g++} -I $builddir -I $srcdir \
+	if ! ${CXX:-g++} -I $builddir -I $srcdir \
 		-I $builddir/src/include -I $srcdir/src/include \
 		-I $builddir/src/interfaces/libpq -I $srcdir/src/interfaces/libpq \
 		$EXTRAINCLUDES $EXTRAFLAGS $CXXFLAGS -c $tmp/test.cpp
-
+	then
+		exit_status=1
+	fi
 done
+
+exit $exit_status

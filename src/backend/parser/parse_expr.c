@@ -2140,6 +2140,14 @@ transformRowExpr(ParseState *pstate, RowExpr *r, bool allowDefault)
 	newr->args = transformExpressionList(pstate, r->args,
 										 pstate->p_expr_kind, allowDefault);
 
+	/* Disallow more columns than will fit in a tuple */
+	if (list_length(newr->args) > MaxTupleAttributeNumber)
+		ereport(ERROR,
+				(errcode(ERRCODE_TOO_MANY_COLUMNS),
+				 errmsg("ROW expressions can have at most %d entries",
+						MaxTupleAttributeNumber),
+				 parser_errposition(pstate, r->location)));
+
 	/* Barring later casting, we consider the type RECORD */
 	newr->row_typeid = RECORDOID;
 	newr->row_format = COERCE_IMPLICIT_CAST;
@@ -3447,7 +3455,7 @@ checkJsonOutputFormat(ParseState *pstate, const JsonFormat *format,
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 					 errmsg("unsupported JSON encoding"),
-					 errhint("only UTF8 JSON encoding is supported"),
+					 errhint("Only UTF8 JSON encoding is supported."),
 					 parser_errposition(pstate, format->location)));
 	}
 }
@@ -3808,6 +3816,7 @@ transformJsonAggConstructor(ParseState *pstate, JsonAggConstructor *agg_ctor,
 		aggref->aggstar = false;
 		aggref->aggvariadic = false;
 		aggref->aggkind = AGGKIND_NORMAL;
+		aggref->aggpresorted = false;
 		/* agglevelsup will be set by transformAggregateCall */
 		aggref->aggsplit = AGGSPLIT_SIMPLE; /* planner might change this */
 		aggref->location = agg_ctor->location;
@@ -4580,7 +4589,7 @@ transformJsonSerializeExpr(ParseState *pstate, JsonSerializeExpr *expr)
 						 errmsg("cannot use RETURNING type %s in %s",
 								format_type_be(returning->typid),
 								"JSON_SERIALIZE()"),
-						 errhint("Try returning a string type or bytea")));
+						 errhint("Try returning a string type or bytea.")));
 		}
 	}
 	else

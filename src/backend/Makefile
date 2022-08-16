@@ -17,7 +17,8 @@ subdir = src/backend
 top_builddir = ../..
 include $(top_builddir)/src/Makefile.global
 
-SUBDIRS = access bootstrap catalog parser commands executor foreign lib libpq \
+SUBDIRS = access backup bootstrap catalog parser commands executor \
+	foreign lib libpq \
 	main nodes optimizer partitioning port postmaster \
 	regex replication rewrite \
 	statistics storage tcop tsearch utils $(top_builddir)/src/timezone \
@@ -101,15 +102,7 @@ postgres: $(POSTGRES_IMP)
 
 $(POSTGRES_IMP): $(OBJS)
 	$(LD) $(LDREL) $(LDOUT) SUBSYS.o $(call expand_subsys,$^)
-ifeq ($(host_os), aix3.2.5)
-	$(MKLDEXPORT) SUBSYS.o $(bindir)/postgres > $@
-else
-ifneq (,$(findstring aix4.1, $(host_os)))
-	$(MKLDEXPORT) SUBSYS.o $(bindir)/postgres > $@
-else
 	$(MKLDEXPORT) SUBSYS.o . > $@
-endif
-endif
 	@rm -f SUBSYS.o
 
 endif # aix

@@ -63,7 +63,7 @@ main(int argc, char *argv[])
 	 * If supported on the current platform, set up a handler to be called if
 	 * the backend/postmaster crashes with a fatal signal or exception.
 	 */
-#if defined(WIN32) && defined(HAVE_MINIDUMP_TYPE)
+#if defined(WIN32)
 	pgwin32_install_crashdump_handler();
 #endif
 
@@ -351,7 +351,7 @@ help(const char *progname)
 	printf(_("  -?, --help         show this help, then exit\n"));
 
 	printf(_("\nDeveloper options:\n"));
-	printf(_("  -f s|i|n|m|h       forbid use of some plan types\n"));
+	printf(_("  -f s|i|o|b|t|n|m|h forbid use of some plan types\n"));
 	printf(_("  -n                 do not reinitialize shared memory after abnormal exit\n"));
 	printf(_("  -O                 allow system table structure changes\n"));
 	printf(_("  -P                 disable system indexes\n"));

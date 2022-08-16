@@ -216,7 +216,7 @@ typedef struct
 	uint32		large_object;
 	bool		date_is_int;
 	bool		float8_pass_by_value;
-	bool		data_checksum_version;
+	uint32		data_checksum_version;
 } ControlData;
 
 /*
@@ -241,9 +241,6 @@ typedef enum
 	PG_WARNING,
 	PG_FATAL
 } eLogType;
-
-
-typedef long pgpid_t;
 
 
 /*

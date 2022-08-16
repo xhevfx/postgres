@@ -18,6 +18,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <ctype.h>
+#include <netdb.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -1102,10 +1103,8 @@ connectOptions2(PGconn *conn)
 		else if (ch->host != NULL && ch->host[0] != '\0')
 		{
 			ch->type = CHT_HOST_NAME;
-#ifdef HAVE_UNIX_SOCKETS
 			if (is_unixsock_path(ch->host))
 				ch->type = CHT_UNIX_SOCKET;
-#endif
 		}
 		else
 		{
@@ -1115,14 +1114,12 @@ connectOptions2(PGconn *conn)
 			 * This bit selects the default host location.  If you change
 			 * this, see also pg_regress.
 			 */
-#ifdef HAVE_UNIX_SOCKETS
 			if (DEFAULT_PGSOCKET_DIR[0])
 			{
 				ch->host = strdup(DEFAULT_PGSOCKET_DIR);
 				ch->type = CHT_UNIX_SOCKET;
 			}
 			else
-#endif
 			{
 				ch->host = strdup(DefaultHost);
 				ch->type = CHT_HOST_NAME;
@@ -1684,7 +1681,6 @@ getHostaddr(PGconn *conn, char *host_addr, int host_addr_len)
 static void
 emitHostIdentityInfo(PGconn *conn, const char *host_addr)
 {
-#ifdef HAVE_UNIX_SOCKETS
 	if (conn->raddr.addr.ss_family == AF_UNIX)
 	{
 		char		service[NI_MAXHOST];
@@ -1698,7 +1694,6 @@ emitHostIdentityInfo(PGconn *conn, const char *host_addr)
 						  service);
 	}
 	else
-#endif							/* HAVE_UNIX_SOCKETS */
 	{
 		const char *displayed_host;
 		const char *displayed_port;
@@ -1748,12 +1743,10 @@ connectFailureMessage(PGconn *conn, int errorno)
 					  "%s\n",
 					  SOCK_STRERROR(errorno, sebuf, sizeof(sebuf)));
 
-#ifdef HAVE_UNIX_SOCKETS
 	if (conn->raddr.addr.ss_family == AF_UNIX)
 		appendPQExpBufferStr(&conn->errorMessage,
 							 libpq_gettext("\tIs the server running locally and accepting connections on that socket?\n"));
 	else
-#endif
 		appendPQExpBufferStr(&conn->errorMessage,
 							 libpq_gettext("\tIs the server running on that host and accepting TCP/IP connections?\n"));
 }
@@ -2236,7 +2229,7 @@ connectDBComplete(PGconn *conn)
  *		will not block.
  *	 o	If you do not supply an IP address for the remote host (i.e. you
  *		supply a host name instead) then PQconnectStart will block on
- *		gethostbyname.  You will be fine if using Unix sockets (i.e. by
+ *		getaddrinfo.  You will be fine if using Unix sockets (i.e. by
  *		supplying neither a host name nor a host address).
  *	 o	If your backend wants to use Kerberos authentication then you must
  *		supply both a host name and a host address, otherwise this function
@@ -2415,7 +2408,6 @@ keep_going:						/* We will come back to here until there is
 				break;
 
 			case CHT_UNIX_SOCKET:
-#ifdef HAVE_UNIX_SOCKETS
 				conn->addrlist_family = hint.ai_family = AF_UNIX;
 				UNIXSOCK_PATH(portstr, thisport, ch->host);
 				if (strlen(portstr) >= UNIXSOCK_PATH_BUFLEN)
@@ -2440,9 +2432,6 @@ keep_going:						/* We will come back to here until there is
 									  portstr, gai_strerror(ret));
 					goto keep_going;
 				}
-#else
-				Assert(false);
-#endif
 				break;
 		}
 

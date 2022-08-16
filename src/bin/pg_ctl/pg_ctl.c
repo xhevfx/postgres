@@ -14,14 +14,12 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <time.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
-#ifdef HAVE_SYS_RESOURCE_H
-#include <sys/time.h>
-#include <sys/resource.h>
-#endif
 
 #include "catalog/pg_control.h"
 #include "common/controldata_utils.h"
@@ -160,7 +158,7 @@ static bool wait_for_postmaster_stop(void);
 static bool wait_for_postmaster_promote(void);
 static bool postmaster_is_alive(pid_t pid);
 
-#if defined(HAVE_GETRLIMIT) && defined(RLIMIT_CORE)
+#if defined(HAVE_GETRLIMIT)
 static void unlimit_core_size(void);
 #endif
 
@@ -776,7 +774,7 @@ wait_for_postmaster_promote(void)
 }
 
 
-#if defined(HAVE_GETRLIMIT) && defined(RLIMIT_CORE)
+#if defined(HAVE_GETRLIMIT)
 static void
 unlimit_core_size(void)
 {
@@ -949,7 +947,7 @@ do_start(void)
 	if (exec_path == NULL)
 		exec_path = find_other_exec_or_die(argv0, "postgres", PG_BACKEND_VERSIONSTR);
 
-#if defined(HAVE_GETRLIMIT) && defined(RLIMIT_CORE)
+#if defined(HAVE_GETRLIMIT)
 	if (allow_core_files)
 		unlimit_core_size();
 #endif
@@ -2069,7 +2067,7 @@ do_help(void)
 	printf(_("If the -D option is omitted, the environment variable PGDATA is used.\n"));
 
 	printf(_("\nOptions for start or restart:\n"));
-#if defined(HAVE_GETRLIMIT) && defined(RLIMIT_CORE)
+#if defined(HAVE_GETRLIMIT)
 	printf(_("  -c, --core-files       allow postgres to produce core files\n"));
 #else
 	printf(_("  -c, --core-files       not applicable on this platform\n"));

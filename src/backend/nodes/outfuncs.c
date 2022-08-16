@@ -16,6 +16,7 @@
 
 #include <ctype.h>
 
+#include "access/attnum.h"
 #include "lib/stringinfo.h"
 #include "miscadmin.h"
 #include "nodes/bitmapset.h"
@@ -96,48 +97,35 @@ static void outChar(StringInfo str, char c);
 	(appendStringInfoString(str, " :" CppAsString(fldname) " "), \
 	 outBitmapset(str, node->fldname))
 
+/* Write a variable-length array (not a List) of Node pointers */
+#define WRITE_NODE_ARRAY(fldname, len) \
+	(appendStringInfoString(str, " :" CppAsString(fldname) " "), \
+	 writeNodeArray(str, (const Node * const *) node->fldname, len))
+
+/* Write a variable-length array of AttrNumber */
 #define WRITE_ATTRNUMBER_ARRAY(fldname, len) \
-	do { \
-		appendStringInfoString(str, " :" CppAsString(fldname) " "); \
-		for (int i = 0; i < len; i++) \
-			appendStringInfo(str, " %d", node->fldname[i]); \
-	} while(0)
+	(appendStringInfoString(str, " :" CppAsString(fldname) " "), \
+	 writeAttrNumberCols(str, node->fldname, len))
 
+/* Write a variable-length array of Oid */
 #define WRITE_OID_ARRAY(fldname, len) \
-	do { \
-		appendStringInfoString(str, " :" CppAsString(fldname) " "); \
-		for (int i = 0; i < len; i++) \
-			appendStringInfo(str, " %u", node->fldname[i]); \
-	} while(0)
+	(appendStringInfoString(str, " :" CppAsString(fldname) " "), \
+	 writeOidCols(str, node->fldname, len))
 
-/*
- * This macro supports the case that the field is NULL.  For the other array
- * macros, that is currently not needed.
- */
+/* Write a variable-length array of Index */
 #define WRITE_INDEX_ARRAY(fldname, len) \
-	do { \
-		appendStringInfoString(str, " :" CppAsString(fldname) " "); \
-		if (node->fldname) \
-			for (int i = 0; i < len; i++) \
-				appendStringInfo(str, " %u", node->fldname[i]); \
-		else \
-			appendStringInfoString(str, "<>"); \
-	} while(0)
+	(appendStringInfoString(str, " :" CppAsString(fldname) " "), \
+	 writeIndexCols(str, node->fldname, len))
 
+/* Write a variable-length array of int */
 #define WRITE_INT_ARRAY(fldname, len) \
-	do { \
-		appendStringInfoString(str, " :" CppAsString(fldname) " "); \
-		for (int i = 0; i < len; i++) \
-			appendStringInfo(str, " %d", node->fldname[i]); \
-	} while(0)
+	(appendStringInfoString(str, " :" CppAsString(fldname) " "), \
+	 writeIntCols(str, node->fldname, len))
 
+/* Write a variable-length array of bool */
 #define WRITE_BOOL_ARRAY(fldname, len) \
-	do { \
-		appendStringInfoString(str, " :" CppAsString(fldname) " "); \
-		for (int i = 0; i < len; i++) \
-			appendStringInfo(str, " %s", booltostr(node->fldname[i])); \
-	} while(0)
-
+	(appendStringInfoString(str, " :" CppAsString(fldname) " "), \
+	 writeBoolCols(str, node->fldname, len))
 
 #define booltostr(x)  ((x) ? "true" : "false")
 
@@ -196,6 +184,61 @@ outChar(StringInfo str, char c)
 	outToken(str, in);
 }
 
+/*
+ * common implementation for scalar-array-writing functions
+ *
+ * The data format is either "<>" for a NULL pointer or "(item item item)".
+ * fmtstr must include a leading space, and the rest of it must produce
+ * something that will be seen as a single simple token by pg_strtok().
+ * convfunc can be empty, or the name of a conversion macro or function.
+ */
+#define WRITE_SCALAR_ARRAY(fnname, datatype, fmtstr, convfunc) \
+static void \
+fnname(StringInfo str, const datatype *arr, int len) \
+{ \
+	if (arr != NULL) \
+	{ \
+		appendStringInfoChar(str, '('); \
+		for (int i = 0; i < len; i++) \
+			appendStringInfo(str, fmtstr, convfunc(arr[i])); \
+		appendStringInfoChar(str, ')'); \
+	} \
+	else \
+		appendStringInfoString(str, "<>"); \
+}
+
+WRITE_SCALAR_ARRAY(writeAttrNumberCols, AttrNumber, " %d",)
+WRITE_SCALAR_ARRAY(writeOidCols, Oid, " %u",)
+WRITE_SCALAR_ARRAY(writeIndexCols, Index, " %u",)
+WRITE_SCALAR_ARRAY(writeIntCols, int, " %d",)
+WRITE_SCALAR_ARRAY(writeBoolCols, bool, " %s", booltostr)
+
+/*
+ * Print an array (not a List) of Node pointers.
+ *
+ * The decoration is identical to that of scalar arrays, but we can't
+ * quite use appendStringInfo() in the loop.
+ */
+static void
+writeNodeArray(StringInfo str, const Node *const *arr, int len)
+{
+	if (arr != NULL)
+	{
+		appendStringInfoChar(str, '(');
+		for (int i = 0; i < len; i++)
+		{
+			appendStringInfoChar(str, ' ');
+			outNode(str, arr[i]);
+		}
+		appendStringInfoChar(str, ')');
+	}
+	else
+		appendStringInfoString(str, "<>");
+}
+
+/*
+ * Print a List.
+ */
 static void
 _outList(StringInfo str, const List *node)
 {
@@ -502,61 +545,58 @@ _outA_Expr(StringInfo str, const A_Expr *node)
 	switch (node->kind)
 	{
 		case AEXPR_OP:
-			appendStringInfoChar(str, ' ');
 			WRITE_NODE_FIELD(name);
 			break;
 		case AEXPR_OP_ANY:
-			appendStringInfoChar(str, ' ');
 			WRITE_NODE_FIELD(name);
-			appendStringInfoString(str, " ANY ");
+			appendStringInfoString(str, " ANY");
 			break;
 		case AEXPR_OP_ALL:
-			appendStringInfoChar(str, ' ');
 			WRITE_NODE_FIELD(name);
-			appendStringInfoString(str, " ALL ");
+			appendStringInfoString(str, " ALL");
 			break;
 		case AEXPR_DISTINCT:
-			appendStringInfoString(str, " DISTINCT ");
+			appendStringInfoString(str, " DISTINCT");
 			WRITE_NODE_FIELD(name);
 			break;
 		case AEXPR_NOT_DISTINCT:
-			appendStringInfoString(str, " NOT_DISTINCT ");
+			appendStringInfoString(str, " NOT_DISTINCT");
 			WRITE_NODE_FIELD(name);
 			break;
 		case AEXPR_NULLIF:
-			appendStringInfoString(str, " NULLIF ");
+			appendStringInfoString(str, " NULLIF");
 			WRITE_NODE_FIELD(name);
 			break;
 		case AEXPR_IN:
-			appendStringInfoString(str, " IN ");
+			appendStringInfoString(str, " IN");
 			WRITE_NODE_FIELD(name);
 			break;
 		case AEXPR_LIKE:
-			appendStringInfoString(str, " LIKE ");
+			appendStringInfoString(str, " LIKE");
 			WRITE_NODE_FIELD(name);
 			break;
 		case AEXPR_ILIKE:
-			appendStringInfoString(str, " ILIKE ");
+			appendStringInfoString(str, " ILIKE");
 			WRITE_NODE_FIELD(name);
 			break;
 		case AEXPR_SIMILAR:
-			appendStringInfoString(str, " SIMILAR ");
+			appendStringInfoString(str, " SIMILAR");
 			WRITE_NODE_FIELD(name);
 			break;
 		case AEXPR_BETWEEN:
-			appendStringInfoString(str, " BETWEEN ");
+			appendStringInfoString(str, " BETWEEN");
 			WRITE_NODE_FIELD(name);
 			break;
 		case AEXPR_NOT_BETWEEN:
-			appendStringInfoString(str, " NOT_BETWEEN ");
+			appendStringInfoString(str, " NOT_BETWEEN");
 			WRITE_NODE_FIELD(name);
 			break;
 		case AEXPR_BETWEEN_SYM:
-			appendStringInfoString(str, " BETWEEN_SYM ");
+			appendStringInfoString(str, " BETWEEN_SYM");
 			WRITE_NODE_FIELD(name);
 			break;
 		case AEXPR_NOT_BETWEEN_SYM:
-			appendStringInfoString(str, " NOT_BETWEEN_SYM ");
+			appendStringInfoString(str, " NOT_BETWEEN_SYM");
 			WRITE_NODE_FIELD(name);
 			break;
 		default:
@@ -617,7 +657,7 @@ _outA_Const(StringInfo str, const A_Const *node)
 	WRITE_NODE_TYPE("A_CONST");
 
 	if (node->isnull)
-		appendStringInfoString(str, "NULL");
+		appendStringInfoString(str, " NULL");
 	else
 	{
 		appendStringInfoString(str, " :val ");
@@ -655,8 +695,7 @@ _outConstraint(StringInfo str, const Constraint *node)
 
 		case CONSTR_IDENTITY:
 			appendStringInfoString(str, "IDENTITY");
-			WRITE_NODE_FIELD(raw_expr);
-			WRITE_STRING_FIELD(cooked_expr);
+			WRITE_NODE_FIELD(options);
 			WRITE_CHAR_FIELD(generated_when);
 			break;
 
@@ -672,6 +711,8 @@ _outConstraint(StringInfo str, const Constraint *node)
 			WRITE_BOOL_FIELD(is_no_inherit);
 			WRITE_NODE_FIELD(raw_expr);
 			WRITE_STRING_FIELD(cooked_expr);
+			WRITE_BOOL_FIELD(skip_validation);
+			WRITE_BOOL_FIELD(initially_valid);
 			break;
 
 		case CONSTR_PRIMARY:

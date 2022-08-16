@@ -89,7 +89,7 @@ typedef enum UpperRelationKind
  * planned.
  *
  * Not all fields are printed.  (In some cases, there is no print support for
- * the field type.)
+ * the field type; in others, doing so would lead to infinite recursion.)
  *----------
  */
 typedef struct PlannerGlobal
@@ -177,7 +177,8 @@ typedef struct PlannerGlobal
  * either here or in that header, whichever is read first.
  *
  * Not all fields are printed.  (In some cases, there is no print support for
- * the field type.)
+ * the field type; in others, doing so would lead to infinite recursion or
+ * bloat dump output more than seems useful.)
  *----------
  */
 #ifndef HAVE_PLANNERINFO_TYPEDEF
@@ -220,14 +221,15 @@ struct PlannerInfo
 	 * does not correspond to a base relation, such as a join RTE or an
 	 * unreferenced view RTE; or if the RelOptInfo hasn't been made yet.
 	 */
-	struct RelOptInfo **simple_rel_array pg_node_attr(read_write_ignore);
+	struct RelOptInfo **simple_rel_array pg_node_attr(array_size(simple_rel_array_size));
 	/* allocated size of array */
-	int			simple_rel_array_size pg_node_attr(read_write_ignore);
+	int			simple_rel_array_size;
 
 	/*
 	 * simple_rte_array is the same length as simple_rel_array and holds
 	 * pointers to the associated rangetable entries.  Using this is a shade
-	 * faster than using rt_fetch(), mostly due to fewer indirections.
+	 * faster than using rt_fetch(), mostly due to fewer indirections.  (Not
+	 * printed because it'd be redundant with parse->rtable.)
 	 */
 	RangeTblEntry **simple_rte_array pg_node_attr(read_write_ignore);
 
@@ -235,7 +237,8 @@ struct PlannerInfo
 	 * append_rel_array is the same length as the above arrays, and holds
 	 * pointers to the corresponding AppendRelInfo entry indexed by
 	 * child_relid, or NULL if the rel is not an appendrel child.  The array
-	 * itself is not allocated if append_rel_list is empty.
+	 * itself is not allocated if append_rel_list is empty.  (Not printed
+	 * because it'd be redundant with append_rel_list.)
 	 */
 	struct AppendRelInfo **append_rel_array pg_node_attr(read_write_ignore);
 
@@ -273,6 +276,9 @@ struct PlannerInfo
 	 * join_cur_level is the current level.  New join-relation RelOptInfos are
 	 * automatically added to the join_rel_level[join_cur_level] list.
 	 * join_rel_level is NULL if not in use.
+	 *
+	 * Note: we've already printed all baserel and joinrel RelOptInfos above,
+	 * so we don't dump join_rel_level or other lists of RelOptInfos.
 	 */
 	/* lists of join-relation RelOptInfos */
 	List	  **join_rel_level pg_node_attr(read_write_ignore);
@@ -359,6 +365,14 @@ struct PlannerInfo
 
 	/* groupClause pathkeys, if any */
 	List	   *group_pathkeys;
+
+	/*
+	 * The number of elements in the group_pathkeys list which belong to the
+	 * GROUP BY clause.  Additional ones belong to ORDER BY / DISTINCT
+	 * aggregates.
+	 */
+	int			num_groupby_pathkeys;
+
 	/* pathkeys of bottom window, if any */
 	List	   *window_pathkeys;
 	/* distinctClause pathkeys, if any */
@@ -403,8 +417,8 @@ struct PlannerInfo
 	/*
 	 * Fields filled during create_plan() for use in setrefs.c
 	 */
-	/* for GroupingFunc fixup */
-	AttrNumber *grouping_map pg_node_attr(array_size(update_colnos), read_write_ignore);
+	/* for GroupingFunc fixup (can't print: array length not known here) */
+	AttrNumber *grouping_map pg_node_attr(read_write_ignore);
 	/* List of MinMaxAggInfos */
 	List	   *minmax_aggs;
 
@@ -442,15 +456,15 @@ struct PlannerInfo
 	 * Information about aggregates. Filled by preprocess_aggrefs().
 	 */
 	/* AggInfo structs */
-	List	   *agginfos pg_node_attr(read_write_ignore);
+	List	   *agginfos;
 	/* AggTransInfo structs */
-	List	   *aggtransinfos pg_node_attr(read_write_ignore);
-	/* number w/ DISTINCT/ORDER BY/WITHIN GROUP */
-	int			numOrderedAggs pg_node_attr(read_write_ignore);
+	List	   *aggtransinfos;
+	/* number of aggs with DISTINCT/ORDER BY/WITHIN GROUP */
+	int			numOrderedAggs;
 	/* does any agg not support partial mode? */
-	bool		hasNonPartialAggs pg_node_attr(read_write_ignore);
+	bool		hasNonPartialAggs;
 	/* is any partial agg non-serializable? */
-	bool		hasNonSerialAggs pg_node_attr(read_write_ignore);
+	bool		hasNonSerialAggs;
 
 	/*
 	 * These fields are used only when hasRecursion is true:
@@ -458,7 +472,7 @@ struct PlannerInfo
 	/* PARAM_EXEC ID for the work table */
 	int			wt_param_id;
 	/* a path for non-recursive term */
-	struct Path *non_recursive_path pg_node_attr(read_write_ignore);
+	struct Path *non_recursive_path;
 
 	/*
 	 * These fields are workspace for createplan.c
@@ -470,7 +484,9 @@ struct PlannerInfo
 
 	/*
 	 * These fields are workspace for setrefs.c.  Each is an array
-	 * corresponding to glob->subplans.
+	 * corresponding to glob->subplans.  (We could probably teach
+	 * gen_node_support.pl how to determine the array length, but it doesn't
+	 * seem worth the trouble, so just mark them read_write_ignore.)
 	 */
 	bool	   *isAltSubplan pg_node_attr(read_write_ignore);
 	bool	   *isUsedSubplan pg_node_attr(read_write_ignore);
@@ -928,16 +944,17 @@ typedef struct RelOptInfo
 	 * Number of partitions; -1 if not yet set; in case of a join relation 0
 	 * means it's considered unpartitioned
 	 */
-	int			nparts pg_node_attr(read_write_ignore);
+	int			nparts;
 	/* Partition bounds */
 	struct PartitionBoundInfoData *boundinfo pg_node_attr(read_write_ignore);
 	/* True if partition bounds were created by partition_bounds_merge() */
 	bool		partbounds_merged;
 	/* Partition constraint, if not the root */
-	List	   *partition_qual pg_node_attr(read_write_ignore);
+	List	   *partition_qual;
 
 	/*
 	 * Array of RelOptInfos of partitions, stored in the same order as bounds
+	 * (don't print, too bulky and duplicative)
 	 */
 	struct RelOptInfo **part_rels pg_node_attr(read_write_ignore);
 
@@ -948,6 +965,12 @@ typedef struct RelOptInfo
 	Bitmapset  *live_parts;
 	/* Relids set of all partition relids */
 	Relids		all_partrels;
+
+	/*
+	 * These arrays are of length partkey->partnatts, which we don't have at
+	 * hand, so don't try to print
+	 */
+
 	/* Non-nullable partition key expressions */
 	List	  **partexprs pg_node_attr(read_write_ignore);
 	/* Nullable partition key expressions */
@@ -1042,30 +1065,26 @@ struct IndexOptInfo
 	int			nkeycolumns;
 
 	/*
-	 * array fields aren't really worth the trouble to print
+	 * table column numbers of index's columns (both key and included
+	 * columns), or 0 for expression columns
 	 */
-
-	/*
-	 * column numbers of index's attributes both key and included columns, or
-	 * 0
-	 */
-	int		   *indexkeys pg_node_attr(read_write_ignore);
+	int		   *indexkeys pg_node_attr(array_size(ncolumns));
 	/* OIDs of collations of index columns */
-	Oid		   *indexcollations pg_node_attr(read_write_ignore);
+	Oid		   *indexcollations pg_node_attr(array_size(nkeycolumns));
 	/* OIDs of operator families for columns */
-	Oid		   *opfamily pg_node_attr(read_write_ignore);
+	Oid		   *opfamily pg_node_attr(array_size(nkeycolumns));
 	/* OIDs of opclass declared input data types */
-	Oid		   *opcintype pg_node_attr(read_write_ignore);
+	Oid		   *opcintype pg_node_attr(array_size(nkeycolumns));
 	/* OIDs of btree opfamilies, if orderable */
-	Oid		   *sortopfamily pg_node_attr(read_write_ignore);
+	Oid		   *sortopfamily pg_node_attr(array_size(nkeycolumns));
 	/* is sort order descending? */
-	bool	   *reverse_sort pg_node_attr(read_write_ignore);
+	bool	   *reverse_sort pg_node_attr(array_size(nkeycolumns));
 	/* do NULLs come first in the sort order? */
-	bool	   *nulls_first pg_node_attr(read_write_ignore);
+	bool	   *nulls_first pg_node_attr(array_size(nkeycolumns));
 	/* opclass-specific options for columns */
 	bytea	  **opclassoptions pg_node_attr(read_write_ignore);
 	/* which index cols can be returned in an index-only scan? */
-	bool	   *canreturn pg_node_attr(read_write_ignore);
+	bool	   *canreturn pg_node_attr(array_size(ncolumns));
 	/* OID of the access method (in pg_am) */
 	Oid			relam;
 
@@ -1098,19 +1117,19 @@ struct IndexOptInfo
 
 	/*
 	 * Remaining fields are copied from the index AM's API struct
-	 * (IndexAmRoutine).  We don't bother to dump them.
+	 * (IndexAmRoutine).
 	 */
-	bool		amcanorderbyop pg_node_attr(read_write_ignore);
-	bool		amoptionalkey pg_node_attr(read_write_ignore);
-	bool		amsearcharray pg_node_attr(read_write_ignore);
-	bool		amsearchnulls pg_node_attr(read_write_ignore);
+	bool		amcanorderbyop;
+	bool		amoptionalkey;
+	bool		amsearcharray;
+	bool		amsearchnulls;
 	/* does AM have amgettuple interface? */
-	bool		amhasgettuple pg_node_attr(read_write_ignore);
+	bool		amhasgettuple;
 	/* does AM have amgetbitmap interface? */
-	bool		amhasgetbitmap pg_node_attr(read_write_ignore);
-	bool		amcanparallel pg_node_attr(read_write_ignore);
+	bool		amhasgetbitmap;
+	bool		amcanparallel;
 	/* does AM have ammarkpos interface? */
-	bool		amcanmarkpos pg_node_attr(read_write_ignore);
+	bool		amcanmarkpos;
 	/* AM's cost estimator */
 	/* Rather than include amapi.h here, we declare amcostestimate like this */
 	void		(*amcostestimate) () pg_node_attr(read_write_ignore);
@@ -1184,12 +1203,9 @@ typedef struct StatisticExtInfo
 	Oid			statOid;
 
 	/* includes child relations */
-	bool		inherit pg_node_attr(read_write_ignore);
+	bool		inherit;
 
-	/*
-	 * back-link to statistic's table; don't print, infinite recursion on plan
-	 * tree dump
-	 */
+	/* back-link to statistic's table; don't print, else infinite recursion */
 	RelOptInfo *rel pg_node_attr(read_write_ignore);
 
 	/* statistics kind of this entry */
@@ -3121,14 +3137,19 @@ typedef struct JoinCostWorkspace
  */
 typedef struct AggInfo
 {
-	/*
-	 * Link to an Aggref expr this state value is for.
-	 *
-	 * There can be multiple identical Aggref's sharing the same per-agg. This
-	 * points to the first one of them.
-	 */
-	Aggref	   *representative_aggref;
+	pg_node_attr(no_copy_equal, no_read)
 
+	NodeTag		type;
+
+	/*
+	 * List of Aggref exprs that this state value is for.
+	 *
+	 * There will always be at least one, but there can be multiple identical
+	 * Aggref's sharing the same per-agg.
+	 */
+	List	   *aggrefs;
+
+	/* Transition state number for this aggregate */
 	int			transno;
 
 	/*
@@ -3137,9 +3158,8 @@ typedef struct AggInfo
 	 */
 	bool		shareable;
 
-	/* Oid of the final function or InvalidOid */
+	/* Oid of the final function, or InvalidOid if none */
 	Oid			finalfn_oid;
-
 } AggInfo;
 
 /*
@@ -3151,34 +3171,40 @@ typedef struct AggInfo
  */
 typedef struct AggTransInfo
 {
+	pg_node_attr(no_copy_equal, no_read)
+
+	NodeTag		type;
+
+	/* Inputs for this transition state */
 	List	   *args;
 	Expr	   *aggfilter;
 
 	/* Oid of the state transition function */
 	Oid			transfn_oid;
 
-	/* Oid of the serialization function or InvalidOid */
+	/* Oid of the serialization function, or InvalidOid if none */
 	Oid			serialfn_oid;
 
-	/* Oid of the deserialization function or InvalidOid */
+	/* Oid of the deserialization function, or InvalidOid if none */
 	Oid			deserialfn_oid;
 
-	/* Oid of the combine function or InvalidOid */
+	/* Oid of the combine function, or InvalidOid if none */
 	Oid			combinefn_oid;
 
 	/* Oid of state value's datatype */
 	Oid			aggtranstype;
+
+	/* Additional data about transtype */
 	int32		aggtranstypmod;
 	int			transtypeLen;
 	bool		transtypeByVal;
+
+	/* Space-consumption estimate */
 	int32		aggtransspace;
 
-	/*
-	 * initial value from pg_aggregate entry
-	 */
-	Datum		initValue;
+	/* Initial value from pg_aggregate entry */
+	Datum		initValue pg_node_attr(read_write_ignore);
 	bool		initValueIsNull;
-
 } AggTransInfo;
 
 #endif							/* PATHNODES_H */

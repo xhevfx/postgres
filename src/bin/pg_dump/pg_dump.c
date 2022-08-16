@@ -3141,6 +3141,7 @@ dumpDatabase(Archive *fout)
 		PGresult   *lo_res;
 		PQExpBuffer loFrozenQry = createPQExpBuffer();
 		PQExpBuffer loOutQry = createPQExpBuffer();
+		PQExpBuffer loHorizonQry = createPQExpBuffer();
 		int			i_relfrozenxid,
 					i_relfilenode,
 					i_oid,
@@ -3167,15 +3168,36 @@ dumpDatabase(Archive *fout)
 		i_relfilenode = PQfnumber(lo_res, "relfilenode");
 		i_oid = PQfnumber(lo_res, "oid");
 
-		appendPQExpBufferStr(loOutQry, "\n-- For binary upgrade, preserve values for pg_largeobject and its index\n");
+		appendPQExpBufferStr(loHorizonQry, "\n-- For binary upgrade, set pg_largeobject relfrozenxid and relminmxid\n");
+		appendPQExpBufferStr(loOutQry, "\n-- For binary upgrade, preserve pg_largeobject and index relfilenodes\n");
 		for (int i = 0; i < PQntuples(lo_res); ++i)
-			appendPQExpBuffer(loOutQry, "UPDATE pg_catalog.pg_class\n"
-							  "SET relfrozenxid = '%u', relminmxid = '%u', relfilenode = '%u'\n"
+		{
+			Oid		oid;
+			RelFileNumber	relfilenumber;
+
+			appendPQExpBuffer(loHorizonQry, "UPDATE pg_catalog.pg_class\n"
+							  "SET relfrozenxid = '%u', relminmxid = '%u'\n"
 							  "WHERE oid = %u;\n",
 							  atooid(PQgetvalue(lo_res, i, i_relfrozenxid)),
 							  atooid(PQgetvalue(lo_res, i, i_relminmxid)),
-							  atooid(PQgetvalue(lo_res, i, i_relfilenode)),
 							  atooid(PQgetvalue(lo_res, i, i_oid)));
+
+			oid = atooid(PQgetvalue(lo_res, i, i_oid));
+			relfilenumber = atooid(PQgetvalue(lo_res, i, i_relfilenode));
+
+			if (oid == LargeObjectRelationId)
+				appendPQExpBuffer(loOutQry,
+								  "SELECT pg_catalog.binary_upgrade_set_next_heap_relfilenode('%u'::pg_catalog.oid);\n",
+								  relfilenumber);
+			else if (oid == LargeObjectLOidPNIndexId)
+				appendPQExpBuffer(loOutQry,
+								  "SELECT pg_catalog.binary_upgrade_set_next_index_relfilenode('%u'::pg_catalog.oid);\n",
+								  relfilenumber);
+		}
+
+		appendPQExpBufferStr(loOutQry,
+							 "TRUNCATE pg_catalog.pg_largeobject;\n");
+		appendPQExpBufferStr(loOutQry, loHorizonQry->data);
 
 		ArchiveEntry(fout, nilCatalogId, createDumpId(),
 					 ARCHIVE_OPTS(.tag = "pg_largeobject",
@@ -3186,6 +3208,7 @@ dumpDatabase(Archive *fout)
 		PQclear(lo_res);
 
 		destroyPQExpBuffer(loFrozenQry);
+		destroyPQExpBuffer(loHorizonQry);
 		destroyPQExpBuffer(loOutQry);
 	}
 
@@ -4412,6 +4435,7 @@ getSubscriptions(Archive *fout)
 	int			i_substream;
 	int			i_subtwophasestate;
 	int			i_subdisableonerr;
+	int			i_suborigin;
 	int			i_subconninfo;
 	int			i_subslotname;
 	int			i_subsynccommit;
@@ -4461,12 +4485,17 @@ getSubscriptions(Archive *fout)
 	if (fout->remoteVersion >= 150000)
 		appendPQExpBufferStr(query,
 							 " s.subtwophasestate,\n"
-							 " s.subdisableonerr\n");
+							 " s.subdisableonerr,\n");
 	else
 		appendPQExpBuffer(query,
 						  " '%c' AS subtwophasestate,\n"
-						  " false AS subdisableonerr\n",
+						  " false AS subdisableonerr,\n",
 						  LOGICALREP_TWOPHASE_STATE_DISABLED);
+
+	if (fout->remoteVersion >= 160000)
+		appendPQExpBufferStr(query, " s.suborigin\n");
+	else
+		appendPQExpBuffer(query, " '%s' AS suborigin\n", LOGICALREP_ORIGIN_ANY);
 
 	appendPQExpBufferStr(query,
 						 "FROM pg_subscription s\n"
@@ -4493,6 +4522,7 @@ getSubscriptions(Archive *fout)
 	i_substream = PQfnumber(res, "substream");
 	i_subtwophasestate = PQfnumber(res, "subtwophasestate");
 	i_subdisableonerr = PQfnumber(res, "subdisableonerr");
+	i_suborigin = PQfnumber(res, "suborigin");
 
 	subinfo = pg_malloc(ntups * sizeof(SubscriptionInfo));
 
@@ -4522,6 +4552,7 @@ getSubscriptions(Archive *fout)
 			pg_strdup(PQgetvalue(res, i, i_subtwophasestate));
 		subinfo[i].subdisableonerr =
 			pg_strdup(PQgetvalue(res, i, i_subdisableonerr));
+		subinfo[i].suborigin = pg_strdup(PQgetvalue(res, i, i_suborigin));
 
 		/* Decide whether we want to dump it */
 		selectDumpableObject(&(subinfo[i].dobj), fout);
@@ -4594,6 +4625,9 @@ dumpSubscription(Archive *fout, const SubscriptionInfo *subinfo)
 
 	if (strcmp(subinfo->subdisableonerr, "t") == 0)
 		appendPQExpBufferStr(query, ", disable_on_error = true");
+
+	if (pg_strcasecmp(subinfo->suborigin, LOGICALREP_ORIGIN_ANY) != 0)
+		appendPQExpBuffer(query, ", origin = %s", subinfo->suborigin);
 
 	if (strcmp(subinfo->subsynccommit, "off") != 0)
 		appendPQExpBuffer(query, ", synchronous_commit = %s", fmtId(subinfo->subsynccommit));
