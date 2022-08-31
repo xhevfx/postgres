@@ -55,14 +55,16 @@ typedef enum CopyInsertMethod
 typedef struct SafeCopyFromState
 {
 #define			REPLAY_BUFFER_SIZE 1000
-	HeapTuple	    replay_buffer[REPLAY_BUFFER_SIZE]; /* accumulates tuples for replaying it after an error */
-	int				saved_tuples;				/* # of tuples in replay_buffer */
-	int 			replayed_tuples;			/* # of tuples was replayed from buffer */
-	int				errors;						/* total # of errors */
-	bool			replay_is_active;			/* if true we replay tuples from buffer */
-	bool			begin_subtransaction;		/* if true we can begin subtransaction */
+	HeapTuple	   *replay_buffer; 			/* accumulates tuples for replaying it after an error */
+	int				saved_tuples;			/* # of tuples in replay_buffer */
+	int 			replayed_tuples;		/* # of tuples was replayed from buffer */
+	int				errors;					/* total # of errors */
+	bool			replay_is_active;		/* if true we replay tuples from buffer */
+	bool			begin_subtransaction;	/* if true we can begin subtransaction */
 	bool			processed_remaining_tuples;	/* for case of replaying last tuples */
 	bool			skip_row;
+
+	MemoryContext	replay_cxt;
 	MemoryContext	oldcontext;
 	ResourceOwner	oldowner;
 } SafeCopyFromState;
