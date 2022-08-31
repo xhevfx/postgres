@@ -659,7 +659,7 @@ WARNING:  COPY check_ign_err, line 4, column n: "a"
 WARNING:  COPY check_ign_err, line 5, column n: "5 {5} 5555555555"
 WARNING:  COPY check_ign_err, line 6, column n: ""
 WARNING:  COPY check_ign_err, line 7, column m: "{a, 7}"
-WARNING:  COPY check_ign_err, line 8, column n: "8	{8}	8"
+WARNING:  Failing row contains (8, {8}, 8).
 WARNING:  FIND 7 ERRORS
 SELECT * FROM check_ign_err;
  n |  m  | k 
@@ -686,7 +686,7 @@ WARNING:  COPY check_ign_err, line 4, column n: "a"
 WARNING:  COPY check_ign_err, line 5, column n: "5 {5} 5555555555"
 WARNING:  COPY check_ign_err, line 6, column n: ""
 WARNING:  COPY check_ign_err, line 7, column m: "{a, 7}"
-WARNING:  COPY check_ign_err, line 8, column n: "8	{8}	8"
+WARNING:  Failing row contains (8, {8}, 8).
 WARNING:  FIND 7 ERRORS
 SELECT * FROM check_ign_err;
  n |  m  | k 
@@ -706,7 +706,7 @@ CREATE FUNCTION fn_trig_instead_of () RETURNS TRIGGER AS '
   END;
 ' LANGUAGE plpgsql;
 CREATE TRIGGER trig_instead_of INSTEAD OF INSERT ON check_ign_err_view
-FOR EACH ROW EXECUTE PROCEDURE fn_trig_instead_of();
+  FOR EACH ROW EXECUTE PROCEDURE fn_trig_instead_of();
 COPY check_ign_err_view FROM STDIN WITH IGNORE_ERRORS;
 WARNING:  COPY check_ign_err_view, line 2: "2	{2}	2	2"
 WARNING:  COPY check_ign_err_view, line 3: "3	{3}"
@@ -714,7 +714,7 @@ WARNING:  COPY check_ign_err_view, line 4, column n: "a"
 WARNING:  COPY check_ign_err_view, line 5, column n: "5 {5} 5555555555"
 WARNING:  COPY check_ign_err_view, line 6, column n: ""
 WARNING:  COPY check_ign_err_view, line 7, column m: "{a, 7}"
-WARNING:  COPY check_ign_err_view, line 8, column n: "8	{8}	8"
+WARNING:  Failing row contains (8, {8}, 8).
 WARNING:  FIND 7 ERRORS
 SELECT * FROM check_ign_err_view;
  n |  m  | k 
@@ -735,7 +735,7 @@ WARNING:  COPY check_ign_err, line 4, column n: "a"
 WARNING:  COPY check_ign_err, line 5, column n: "5 {5} 5555555555"
 WARNING:  COPY check_ign_err, line 6, column n: ""
 WARNING:  COPY check_ign_err, line 7, column m: "{a, 7}"
-WARNING:  COPY check_ign_err, line 8, column n: "8	{8}	8"
+WARNING:  Failing row contains (8, {8}, 8).
 WARNING:  FIND 7 ERRORS
 SELECT * FROM check_ign_err;
  n |  m  | k 
@@ -760,7 +760,7 @@ CREATE FUNCTION fn_trig_before_part () RETURNS TRIGGER AS '
   END;
 ' LANGUAGE plpgsql;
 CREATE TRIGGER trig_before_part BEFORE INSERT ON check_ign_err
-FOR EACH ROW EXECUTE PROCEDURE fn_trig_before_part();
+  FOR EACH ROW EXECUTE PROCEDURE fn_trig_before_part();
 COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS;
 WARNING:  COPY check_ign_err, line 2: "2	{2}	2	2"
 WARNING:  COPY check_ign_err, line 3: "3	{3}"
@@ -768,7 +768,7 @@ WARNING:  COPY check_ign_err, line 4, column n: "a"
 WARNING:  COPY check_ign_err, line 5, column n: "5 {5} 5555555555"
 WARNING:  COPY check_ign_err, line 6, column n: ""
 WARNING:  COPY check_ign_err, line 7, column m: "{a, 7}"
-WARNING:  COPY check_ign_err, line 8, column n: "8	{8}	8"
+WARNING:  Failing row contains (8, {8}, 8).
 WARNING:  FIND 7 ERRORS
 SELECT * FROM check_ign_err;
  n |  m  | k 

@@ -614,10 +614,8 @@ safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext, Datum *values, boo
 	}
 	PG_CATCH();
 	{
-		ErrorData *errdata;
-		MemoryContext cxt = MemoryContextSwitchTo(sfcstate->oldcontext);
-
-		errdata = CopyErrorData();
+		MemoryContext ecxt = MemoryContextSwitchTo(sfcstate->oldcontext);
+		ErrorData *errdata = CopyErrorData();
 
 		RollbackAndReleaseCurrentSubTransaction();
 		CurrentResourceOwner = sfcstate->oldowner;
@@ -625,6 +623,7 @@ safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext, Datum *values, boo
 		switch (errdata->sqlerrcode)
 		{
 			/* Ignore data exceptions */
+			case ERRCODE_CHARACTER_NOT_IN_REPERTOIRE:
 			case ERRCODE_DATA_EXCEPTION:
 			case ERRCODE_ARRAY_ELEMENT_ERROR:
 			case ERRCODE_DATETIME_VALUE_OUT_OF_RANGE:
@@ -681,7 +680,7 @@ safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext, Datum *values, boo
 		FreeErrorData(errdata);
 		errdata = NULL;
 
-		MemoryContextSwitchTo(cxt);
+		MemoryContextSwitchTo(ecxt);
 	}
 	PG_END_TRY();
 
@@ -717,10 +716,8 @@ safeExecConstraints(CopyFromState cstate, ResultRelInfo *resultRelInfo, TupleTab
 		ExecConstraints(resultRelInfo, myslot, estate);
 	PG_CATCH();
 	{
-		ErrorData *errdata;
-		MemoryContext cxt = MemoryContextSwitchTo(sfcstate->oldcontext);
-
-		errdata = CopyErrorData();
+		MemoryContext ecxt = MemoryContextSwitchTo(sfcstate->oldcontext);
+		ErrorData *errdata = CopyErrorData();
 
 		switch (errdata->sqlerrcode)
 		{
@@ -733,10 +730,10 @@ safeExecConstraints(CopyFromState cstate, ResultRelInfo *resultRelInfo, TupleTab
 			case ERRCODE_CHECK_VIOLATION:
 			case ERRCODE_EXCLUSION_VIOLATION:
 				sfcstate->errors++;
-				if (cstate->sfcstate->errors <= 100)
+				if (sfcstate->errors <= 100)
 					ereport(WARNING,
 							(errcode(errdata->sqlerrcode),
-							errmsg("%s", errdata->context)));
+							errmsg("%s", errdata->detail)));
 
 				sfcstate->begin_subtransaction = true;
 				sfcstate->skip_row = true;
@@ -750,7 +747,7 @@ safeExecConstraints(CopyFromState cstate, ResultRelInfo *resultRelInfo, TupleTab
 		FreeErrorData(errdata);
 		errdata = NULL;
 
-		MemoryContextSwitchTo(cxt);
+		MemoryContextSwitchTo(ecxt);
 	}
 	PG_END_TRY();
 }
@@ -1117,7 +1114,6 @@ CopyFrom(CopyFromState cstate)
 
 			if (cstate->sfcstate->skip_row)
 				continue;
-
 		}
 		else
 			valid_row = NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull);
