@@ -665,8 +665,8 @@ safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext, Datum *values, boo
 					HeapTuple saved_tuple;
 					MemoryContext cxt;
 
-					/* Fill replay_buffer in oldcontext*/
-					cxt = MemoryContextSwitchTo(sfcstate->oldcontext);
+					/* Filling replay_buffer in replay_cxt*/
+					cxt = MemoryContextSwitchTo(sfcstate->replay_cxt);
 					saved_tuple = heap_form_tuple(RelationGetDescr(cstate->rel), values, nulls);
 					sfcstate->replay_buffer[sfcstate->saved_tuples++] = saved_tuple;
 					MemoryContextSwitchTo(cxt);
@@ -703,13 +703,24 @@ safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext, Datum *values, boo
 		else
 		{
 			if (sfcstate->replayed_tuples < sfcstate->saved_tuples)
-				/* Replaying tuple */
+			{
+				/* Replaying the tuple */
+				MemoryContext cxt = MemoryContextSwitchTo(sfcstate->replay_cxt);
+
 				heap_deform_tuple(sfcstate->replay_buffer[sfcstate->replayed_tuples++], RelationGetDescr(cstate->rel), values, nulls);
+				MemoryContextSwitchTo(cxt);
+			}
 			else
 			{
+				MemoryContext cxt;
+
 				/* Clean up replay_buffer */
-				MemSet(sfcstate->replay_buffer, 0, REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
+				MemoryContextReset(sfcstate->replay_cxt);
 				sfcstate->saved_tuples = sfcstate->replayed_tuples = 0;
+
+				cxt = MemoryContextSwitchTo(sfcstate->replay_cxt);
+				sfcstate->replay_buffer = (HeapTuple *) palloc(REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
+				MemoryContextSwitchTo(cxt);
 
 				sfcstate->replay_is_active = false;
 				sfcstate->skip_row = true;
@@ -1185,6 +1196,14 @@ CopyFrom(CopyFromState cstate)
 	if (cstate->opts.ignore_errors)
 	{
 		cstate->sfcstate = palloc(sizeof(SafeCopyFromState));
+
+		cstate->sfcstate->replay_cxt = AllocSetContextCreate(oldcontext,
+									   "Replay context",
+									   ALLOCSET_DEFAULT_SIZES);
+
+		MemoryContextSwitchTo(cstate->sfcstate->replay_cxt);
+		cstate->sfcstate->replay_buffer = (HeapTuple *) palloc(REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
+		MemoryContextSwitchTo(oldcontext);
 
 		cstate->sfcstate->saved_tuples = 0;
 		cstate->sfcstate->replayed_tuples = 0;
