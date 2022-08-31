@@ -480,7 +480,7 @@ CREATE FUNCTION fn_trig_before () RETURNS TRIGGER AS '
   END;
 ' LANGUAGE plpgsql;
 CREATE TRIGGER trig_before BEFORE INSERT ON check_ign_err
-FOR EACH ROW EXECUTE PROCEDURE fn_trig_before();
+  FOR EACH ROW EXECUTE PROCEDURE fn_trig_before();
 COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS;
 1	{1}	1
 2	{2}	2	2
@@ -505,7 +505,7 @@ CREATE FUNCTION fn_trig_instead_of () RETURNS TRIGGER AS '
   END;
 ' LANGUAGE plpgsql;
 CREATE TRIGGER trig_instead_of INSTEAD OF INSERT ON check_ign_err_view
-FOR EACH ROW EXECUTE PROCEDURE fn_trig_instead_of();
+  FOR EACH ROW EXECUTE PROCEDURE fn_trig_instead_of();
 COPY check_ign_err_view FROM STDIN WITH IGNORE_ERRORS;
 1	{1}	1
 2	{2}	2	2
