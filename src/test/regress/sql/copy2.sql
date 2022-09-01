@@ -495,30 +495,30 @@ SELECT * FROM check_ign_err;
 DROP TRIGGER trig_before on check_ign_err;
 
 -- INSTEAD OF row trigger
-TRUNCATE check_ign_err;
-TRUNCATE trig_test;
-CREATE VIEW check_ign_err_view AS SELECT * FROM check_ign_err;
-CREATE FUNCTION fn_trig_instead_of () RETURNS TRIGGER AS '
-  BEGIN
-    INSERT INTO check_ign_err VALUES(NEW.n, NEW.m, NEW.k);
-    RETURN NEW;
-  END;
-' LANGUAGE plpgsql;
-CREATE TRIGGER trig_instead_of INSTEAD OF INSERT ON check_ign_err_view
-  FOR EACH ROW EXECUTE PROCEDURE fn_trig_instead_of();
-COPY check_ign_err_view FROM STDIN WITH IGNORE_ERRORS;
-1	{1}	1
-2	{2}	2	2
-3	{3}
-a	{4}	4
-5 {5} 5555555555
+-- TRUNCATE check_ign_err;
+-- TRUNCATE trig_test;
+-- CREATE VIEW check_ign_err_view AS SELECT * FROM check_ign_err;
+-- CREATE FUNCTION fn_trig_instead_of () RETURNS TRIGGER AS '
+--   BEGIN
+--     INSERT INTO check_ign_err VALUES(NEW.n, NEW.m, NEW.k);
+--     RETURN NEW;
+--   END;
+-- ' LANGUAGE plpgsql;
+-- CREATE TRIGGER trig_instead_of INSTEAD OF INSERT ON check_ign_err_view
+--   FOR EACH ROW EXECUTE PROCEDURE fn_trig_instead_of();
+-- COPY check_ign_err_view FROM STDIN WITH IGNORE_ERRORS;
+-- 1	{1}	1
+-- 2	{2}	2	2
+-- 3	{3}
+-- a	{4}	4
+-- 5 {5} 5555555555
 
-7	{a, 7}	7
-8	{8}	8
-\.
-SELECT * FROM check_ign_err_view;
-DROP TRIGGER trig_instead_of ON check_ign_err_view;
-DROP VIEW check_ign_err_view;
+-- 7	{a, 7}	7
+-- 8	{8}	8
+-- \.
+-- SELECT * FROM check_ign_err_view;
+-- DROP TRIGGER trig_instead_of ON check_ign_err_view;
+-- DROP VIEW check_ign_err_view;
 
 -- foreign table case in postgres_fdw extension
 
