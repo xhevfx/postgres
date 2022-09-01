@@ -115,7 +115,6 @@ static bool safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext,
 static void safeExecConstraints(CopyFromState cstate, ResultRelInfo *resultRelInfo,
 								TupleTableSlot *myslot, EState *estate);
 
-
 /*
  * error context callback for COPY FROM
  *
@@ -647,16 +646,17 @@ safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext, Datum *values, boo
 
 	PG_TRY();
 	{
+		if (sfcstate->begin_subtransaction)
+		{
+			BeginInternalSubTransaction(NULL);
+			CurrentResourceOwner = sfcstate->oldowner;
+			elog(WARNING, "BEGIN");
+
+			sfcstate->begin_subtransaction = false;
+		}
+
 		if (!sfcstate->replay_is_active)
 		{
-			if (sfcstate->begin_subtransaction)
-			{
-				BeginInternalSubTransaction(NULL);
-				CurrentResourceOwner = sfcstate->oldowner;
-
-				sfcstate->begin_subtransaction = false;
-			}
-
 			if (sfcstate->saved_tuples < REPLAY_BUFFER_SIZE)
 			{
 				valid_row = NextCopyFrom(cstate, econtext, values, nulls);
@@ -675,9 +675,6 @@ safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext, Datum *values, boo
 				}
 				else if (!sfcstate->processed_remaining_tuples)
 				{
-					ReleaseCurrentSubTransaction();
-					CurrentResourceOwner = sfcstate->oldowner;
-
 					if (sfcstate->replayed_tuples < sfcstate->saved_tuples)
 					{
 						/* Prepare to replay remaining tuples if they exist */
@@ -691,10 +688,7 @@ safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext, Datum *values, boo
 			}
 			else
 			{
-				/* Buffer was filled, commit subtransaction and prepare to replay */
-				ReleaseCurrentSubTransaction();
-				CurrentResourceOwner = sfcstate->oldowner;
-
+				/* Buffer was filled, prepare for replaying */
 				sfcstate->replay_is_active = true;
 				sfcstate->begin_subtransaction = true;
 				sfcstate->skip_row = true;
@@ -704,6 +698,7 @@ safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext, Datum *values, boo
 		{
 			if (sfcstate->replayed_tuples < sfcstate->saved_tuples)
 			{
+				elog(WARNING, "REPLAY");
 				/* Replaying the tuple */
 				MemoryContext cxt = MemoryContextSwitchTo(sfcstate->replay_cxt);
 
@@ -713,6 +708,10 @@ safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext, Datum *values, boo
 			else
 			{
 				MemoryContext cxt;
+
+				ReleaseCurrentSubTransaction();
+				CurrentResourceOwner = sfcstate->oldowner;
+				elog(WARNING, "COMMIT");
 
 				/* Clean up replay_buffer */
 				MemoryContextReset(sfcstate->replay_cxt);
@@ -734,6 +733,7 @@ safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext, Datum *values, boo
 
 		RollbackAndReleaseCurrentSubTransaction();
 		CurrentResourceOwner = sfcstate->oldowner;
+		elog(WARNING, "ROLLBACK");
 
 		switch (errdata->sqlerrcode)
 		{
@@ -833,6 +833,10 @@ safeExecConstraints(CopyFromState cstate, ResultRelInfo *resultRelInfo, TupleTab
 	{
 		MemoryContext ecxt = MemoryContextSwitchTo(sfcstate->oldcontext);
 		ErrorData *errdata = CopyErrorData();
+
+		RollbackAndReleaseCurrentSubTransaction();
+		CurrentResourceOwner = sfcstate->oldowner;
+		elog(WARNING, "ROLLBACK CONSTRAINTS");
 
 		switch (errdata->sqlerrcode)
 		{
@@ -1292,8 +1296,12 @@ CopyFrom(CopyFromState cstate)
 				 * clause.
 				 */
 				pgstat_progress_update_param(PROGRESS_COPY_TUPLES_EXCLUDED,
-											 ++excluded);
-				continue;
+											++excluded);
+
+				if (cstate->opts.ignore_errors)
+					cstate->sfcstate->skip_row = true;
+				else
+					continue;
 			}
 		}
 
