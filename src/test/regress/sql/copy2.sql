@@ -462,7 +462,7 @@ COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS;
 2	{2}	2	2
 3	{3}
 a	{4}	4
-5 {5} 5555555555
+5	{5}	5555555555
 
 7	{a, 7}	7
 8	{8}	8
@@ -472,21 +472,21 @@ SELECT * FROM check_ign_err;
 -- CIM_SINGLE cases
 -- BEFORE row trigger
 TRUNCATE check_ign_err;
-CREATE TABLE trig_test(n int, m int[]);
+CREATE TABLE trig_test(n int, m int[], k int);
 CREATE FUNCTION fn_trig_before () RETURNS TRIGGER AS '
   BEGIN
-    INSERT INTO trig_test VALUES(NEW.n, NEW.m);
+    INSERT INTO trig_test VALUES(NEW.n, NEW.m, NEW.k);
     RETURN NEW;
   END;
 ' LANGUAGE plpgsql;
 CREATE TRIGGER trig_before BEFORE INSERT ON check_ign_err
-  FOR EACH ROW EXECUTE PROCEDURE fn_trig_before();
+FOR EACH ROW EXECUTE PROCEDURE fn_trig_before();
 COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS;
 1	{1}	1
 2	{2}	2	2
 3	{3}
 a	{4}	4
-5 {5} 5555555555
+5	{5}	5555555555
 
 7	{a, 7}	7
 8	{8}	8
@@ -500,18 +500,18 @@ TRUNCATE trig_test;
 CREATE VIEW check_ign_err_view AS SELECT * FROM check_ign_err;
 CREATE FUNCTION fn_trig_instead_of () RETURNS TRIGGER AS '
   BEGIN
-    INSERT INTO check_ign_err VALUES(NEW.n, NEW.m, NEW.k);
+    INSERT INTO trig_test VALUES(NEW.n, NEW.m, NEW.k);
     RETURN NEW;
   END;
 ' LANGUAGE plpgsql;
 CREATE TRIGGER trig_instead_of INSTEAD OF INSERT ON check_ign_err_view
-  FOR EACH ROW EXECUTE PROCEDURE fn_trig_instead_of();
+FOR EACH ROW EXECUTE PROCEDURE fn_trig_instead_of();
 COPY check_ign_err_view FROM STDIN WITH IGNORE_ERRORS;
 1	{1}	1
 2	{2}	2	2
 3	{3}
 a	{4}	4
-5 {5} 5555555555
+5	{5}	5555555555
 
 7	{a, 7}	7
 8	{8}	8
@@ -530,7 +530,7 @@ COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS
 2	{2}	2	2
 3	{3}
 a	{4}	4
-5 {5} 5555555555
+5	{5}	5555555555
 
 7	{a, 7}	7
 8	{8}	8
@@ -560,7 +560,7 @@ COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS;
 2	{2}	2	2
 3	{3}
 a	{4}	4
-5 {5} 5555555555
+5	{5}	5555555555
 
 7	{a, 7}	7
 8	{8}	8
