@@ -570,7 +570,7 @@ safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext, Datum *values, boo
 
 					sfcstate->skip_row = true;
 				}
-				else if (!sfcstate->processed_remaining_tuples)
+				if (!valid_row && !sfcstate->processed_remaining_tuples)
 				{
 					if (sfcstate->replayed_tuples < sfcstate->saved_tuples)
 					{
@@ -725,7 +725,21 @@ safeExecConstraints(CopyFromState cstate, ResultRelInfo *resultRelInfo, TupleTab
 	sfcstate->skip_row = false;
 
 	PG_TRY();
+	{
 		ExecConstraints(resultRelInfo, myslot, estate);
+
+		HeapTuple saved_tuple;
+		MemoryContext cxt;
+
+		/* Filling replay_buffer in replay_cxt*/
+		cxt = MemoryContextSwitchTo(sfcstate->replay_cxt);
+		saved_tuple = heap_form_tuple(RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
+		sfcstate->replay_buffer[sfcstate->saved_tuples++] = saved_tuple;
+		MemoryContextSwitchTo(cxt);
+		elog(WARNING, "MYSLOT VALUE: %ld", myslot->tts_values[0]);
+
+		sfcstate->skip_row = true;
+	}
 	PG_CATCH();
 	{
 		MemoryContext ecxt = MemoryContextSwitchTo(sfcstate->oldcontext);
@@ -1093,11 +1107,12 @@ CopyFrom(CopyFromState cstate)
 		cstate->sfcstate->oldcontext = oldcontext;
 	}
 
+	SafeCopyFromState *sfcstate = cstate->sfcstate;
+
 	for (;;)
 	{
 		TupleTableSlot *myslot;
 		bool		skip_tuple;
-		bool		valid_row;
 
 		CHECK_FOR_INTERRUPTS();
 
@@ -1136,291 +1151,770 @@ CopyFrom(CopyFromState cstate)
 		 */
 		if (cstate->sfcstate)
 		{
-			valid_row = safeNextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull);
+			bool	valid_row;
 
-			if (cstate->sfcstate->skip_row)
-				continue;
-		}
-		else
-			valid_row = NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull);
+			sfcstate->skip_row = false;
 
-		if (!valid_row)
-			break;
-
-		ExecStoreVirtualTuple(myslot);
-
-		/*
-		 * Constraints and where clause might reference the tableoid column,
-		 * so (re-)initialize tts_tableOid before evaluating them.
-		 */
-		myslot->tts_tableOid = RelationGetRelid(target_resultRelInfo->ri_RelationDesc);
-
-		/* Triggers and stuff need to be invoked in query context. */
-		MemoryContextSwitchTo(oldcontext);
-
-		if (cstate->whereClause)
-		{
-			econtext->ecxt_scantuple = myslot;
-			/* Skip items that don't match COPY's WHERE clause */
-			if (!ExecQual(cstate->qualexpr, econtext))
+			if (sfcstate->begin_subtransaction)
 			{
-				/*
-				 * Report that this tuple was filtered out by the WHERE
-				 * clause.
-				 */
-				pgstat_progress_update_param(PROGRESS_COPY_TUPLES_EXCLUDED,
-											 ++excluded);
-				continue;
+				BeginInternalSubTransaction(NULL);
+				CurrentResourceOwner = sfcstate->oldowner;
+				elog(WARNING, "BEGIN");
+
+				sfcstate->begin_subtransaction = false;
 			}
-		}
 
-		/* Determine the partition to insert the tuple into */
-		if (proute)
-		{
-			TupleConversionMap *map;
+			elog(WARNING, "SAVED_TUPLES, REPLAYED_TUPLES: %d, %d", sfcstate->saved_tuples, sfcstate->replayed_tuples);
 
-			/*
-			 * Attempt to find a partition suitable for this tuple.
-			 * ExecFindPartition() will raise an error if none can be found or
-			 * if the found partition is not suitable for INSERTs.
-			 */
-			resultRelInfo = ExecFindPartition(mtstate, target_resultRelInfo,
-											  proute, myslot, estate);
-
-			if (prevResultRelInfo != resultRelInfo)
+			PG_TRY();
 			{
-				/* Determine which triggers exist on this partition */
-				has_before_insert_row_trig = (resultRelInfo->ri_TrigDesc &&
-											  resultRelInfo->ri_TrigDesc->trig_insert_before_row);
-
-				has_instead_insert_row_trig = (resultRelInfo->ri_TrigDesc &&
-											   resultRelInfo->ri_TrigDesc->trig_insert_instead_row);
-
-				/*
-				 * Disable multi-inserts when the partition has BEFORE/INSTEAD
-				 * OF triggers, or if the partition is a foreign partition.
-				 */
-				leafpart_use_multi_insert = insertMethod == CIM_MULTI_CONDITIONAL &&
-					!has_before_insert_row_trig &&
-					!has_instead_insert_row_trig &&
-					resultRelInfo->ri_FdwRoutine == NULL;
-
-				/* Set the multi-insert buffer to use for this partition. */
-				if (leafpart_use_multi_insert)
+				if (!sfcstate->replay_is_active)
 				{
-					if (resultRelInfo->ri_CopyMultiInsertBuffer == NULL)
-						CopyMultiInsertInfoSetupBuffer(&multiInsertInfo,
-													   resultRelInfo);
+					if (sfcstate->saved_tuples < REPLAY_BUFFER_SIZE)
+					{
+						valid_row = NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull);
+
+						if (!valid_row && !sfcstate->processed_remaining_tuples &&
+							sfcstate->replayed_tuples < sfcstate->saved_tuples)
+						{
+								/* Prepare to replay remaining tuples if they exist */
+								sfcstate->replay_is_active = true;
+								sfcstate->processed_remaining_tuples = true;
+								sfcstate->skip_row = true;
+						}
+					}
+					else
+					{
+						/* Buffer was filled, prepare for replaying */
+						sfcstate->replay_is_active = true;
+						sfcstate->skip_row = true;
+					}
 				}
-				else if (insertMethod == CIM_MULTI_CONDITIONAL &&
-						 !CopyMultiInsertInfoIsEmpty(&multiInsertInfo))
+				else
+				{
+					if (sfcstate->replayed_tuples < sfcstate->saved_tuples)
+					{
+						elog(WARNING, "REPLAY");
+						/* Replaying the tuple */
+						MemoryContext cxt = MemoryContextSwitchTo(sfcstate->replay_cxt);
+
+						heap_deform_tuple(sfcstate->replay_buffer[sfcstate->replayed_tuples++], RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
+						MemoryContextSwitchTo(cxt);
+					}
+					else
+					{
+						MemoryContext cxt;
+
+						ReleaseCurrentSubTransaction();
+						CurrentResourceOwner = sfcstate->oldowner;
+						elog(WARNING, "COMMIT AND CLEAN UP");
+
+						/* Clean up replay_buffer */
+						MemoryContextReset(sfcstate->replay_cxt);
+						sfcstate->saved_tuples = sfcstate->replayed_tuples = 0;
+
+						cxt = MemoryContextSwitchTo(sfcstate->replay_cxt);
+						sfcstate->replay_buffer = (HeapTuple *) palloc(REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
+						MemoryContextSwitchTo(cxt);
+
+						sfcstate->replay_is_active = false;
+						sfcstate->skip_row = true;
+					}
+				}
+			}
+			PG_CATCH();
+			{
+				MemoryContext ecxt = MemoryContextSwitchTo(sfcstate->oldcontext);
+				ErrorData *errdata = CopyErrorData();
+
+				RollbackAndReleaseCurrentSubTransaction();
+				CurrentResourceOwner = sfcstate->oldowner;
+				elog(WARNING, "ROLLBACK");
+
+				switch (errdata->sqlerrcode)
+				{
+					/* Ignore data exceptions */
+					case ERRCODE_CHARACTER_NOT_IN_REPERTOIRE:
+					case ERRCODE_DATA_EXCEPTION:
+					case ERRCODE_ARRAY_ELEMENT_ERROR:
+					case ERRCODE_DATETIME_VALUE_OUT_OF_RANGE:
+					case ERRCODE_INTERVAL_FIELD_OVERFLOW:
+					case ERRCODE_INVALID_CHARACTER_VALUE_FOR_CAST:
+					case ERRCODE_INVALID_DATETIME_FORMAT:
+					case ERRCODE_INVALID_ESCAPE_CHARACTER:
+					case ERRCODE_INVALID_ESCAPE_SEQUENCE:
+					case ERRCODE_NONSTANDARD_USE_OF_ESCAPE_CHARACTER:
+					case ERRCODE_INVALID_PARAMETER_VALUE:
+					case ERRCODE_INVALID_TABLESAMPLE_ARGUMENT:
+					case ERRCODE_INVALID_TIME_ZONE_DISPLACEMENT_VALUE:
+					case ERRCODE_NULL_VALUE_NOT_ALLOWED:
+					case ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE:
+					case ERRCODE_SEQUENCE_GENERATOR_LIMIT_EXCEEDED:
+					case ERRCODE_STRING_DATA_LENGTH_MISMATCH:
+					case ERRCODE_STRING_DATA_RIGHT_TRUNCATION:
+					case ERRCODE_INVALID_TEXT_REPRESENTATION:
+					case ERRCODE_INVALID_BINARY_REPRESENTATION:
+					case ERRCODE_BAD_COPY_FILE_FORMAT:
+					case ERRCODE_UNTRANSLATABLE_CHARACTER:
+					case ERRCODE_DUPLICATE_JSON_OBJECT_KEY_VALUE:
+					case ERRCODE_INVALID_ARGUMENT_FOR_SQL_JSON_DATETIME_FUNCTION:
+					case ERRCODE_INVALID_JSON_TEXT:
+					case ERRCODE_INVALID_SQL_JSON_SUBSCRIPT:
+					case ERRCODE_MORE_THAN_ONE_SQL_JSON_ITEM:
+					case ERRCODE_NO_SQL_JSON_ITEM:
+					case ERRCODE_NON_NUMERIC_SQL_JSON_ITEM:
+					case ERRCODE_NON_UNIQUE_KEYS_IN_A_JSON_OBJECT:
+					case ERRCODE_SINGLETON_SQL_JSON_ITEM_REQUIRED:
+					case ERRCODE_SQL_JSON_ARRAY_NOT_FOUND:
+					case ERRCODE_SQL_JSON_MEMBER_NOT_FOUND:
+					case ERRCODE_SQL_JSON_NUMBER_NOT_FOUND:
+					case ERRCODE_SQL_JSON_OBJECT_NOT_FOUND:
+					case ERRCODE_TOO_MANY_JSON_ARRAY_ELEMENTS:
+					case ERRCODE_TOO_MANY_JSON_OBJECT_MEMBERS:
+					case ERRCODE_SQL_JSON_SCALAR_REQUIRED:
+					case ERRCODE_SQL_JSON_ITEM_CANNOT_BE_CAST_TO_TARGET_TYPE:
+						sfcstate->errors++;
+						if (sfcstate->errors <= 100)
+							ereport(WARNING,
+									(errcode(errdata->sqlerrcode),
+									errmsg("%s", errdata->context)));
+
+						sfcstate->begin_subtransaction = true;
+						sfcstate->skip_row = true;
+
+						break;
+					default:
+						PG_RE_THROW();
+				}
+
+				FlushErrorState();
+				FreeErrorData(errdata);
+				errdata = NULL;
+
+				MemoryContextSwitchTo(ecxt);
+			}
+			PG_END_TRY();
+
+			if (!valid_row && !sfcstate->replay_is_active)
+			{
+				if (sfcstate->errors == 0)
+					ereport(NOTICE,
+							errmsg("FIND %d ERRORS", sfcstate->errors));
+				else if (sfcstate->errors == 1)
+					ereport(WARNING,
+							errmsg("FIND %d ERROR", sfcstate->errors));
+				else
+					ereport(WARNING,
+							errmsg("FIND %d ERRORS", sfcstate->errors));
+
+				break;
+			}
+
+			if (sfcstate->skip_row == true)
+				continue;
+
+			ExecStoreVirtualTuple(myslot);
+
+			myslot->tts_tableOid = RelationGetRelid(target_resultRelInfo->ri_RelationDesc);
+
+			MemoryContextSwitchTo(oldcontext);
+
+			if (cstate->whereClause)
+			{
+				econtext->ecxt_scantuple = myslot;
+				/* Skip items that don't match COPY's WHERE clause */
+				if (!ExecQual(cstate->qualexpr, econtext))
 				{
 					/*
-					 * Flush pending inserts if this partition can't use
-					 * batching, so rows are visible to triggers etc.
-					 */
-					CopyMultiInsertInfoFlush(&multiInsertInfo, resultRelInfo);
-				}
-
-				if (bistate != NULL)
-					ReleaseBulkInsertStatePin(bistate);
-				prevResultRelInfo = resultRelInfo;
-			}
-
-			/*
-			 * If we're capturing transition tuples, we might need to convert
-			 * from the partition rowtype to root rowtype. But if there are no
-			 * BEFORE triggers on the partition that could change the tuple,
-			 * we can just remember the original unconverted tuple to avoid a
-			 * needless round trip conversion.
-			 */
-			if (cstate->transition_capture != NULL)
-				cstate->transition_capture->tcs_original_insert_tuple =
-					!has_before_insert_row_trig ? myslot : NULL;
-
-			/*
-			 * We might need to convert from the root rowtype to the partition
-			 * rowtype.
-			 */
-			map = resultRelInfo->ri_RootToPartitionMap;
-			if (insertMethod == CIM_SINGLE || !leafpart_use_multi_insert)
-			{
-				/* non batch insert */
-				if (map != NULL)
-				{
-					TupleTableSlot *new_slot;
-
-					new_slot = resultRelInfo->ri_PartitionTupleSlot;
-					myslot = execute_attr_map_slot(map->attrMap, myslot, new_slot);
+					* Report that this tuple was filtered out by the WHERE
+					* clause.
+					*/
+					pgstat_progress_update_param(PROGRESS_COPY_TUPLES_EXCLUDED,
+												++excluded);
+					continue;
 				}
 			}
-			else
+
+			if (proute)
 			{
+				TupleConversionMap *map;
+
 				/*
-				 * Prepare to queue up tuple for later batch insert into
-				 * current partition.
-				 */
-				TupleTableSlot *batchslot;
+				* Attempt to find a partition suitable for this tuple.
+				* ExecFindPartition() will raise an error if none can be found or
+				* if the found partition is not suitable for INSERTs.
+				*/
+				resultRelInfo = ExecFindPartition(mtstate, target_resultRelInfo,
+												proute, myslot, estate);
 
-				/* no other path available for partitioned table */
-				Assert(insertMethod == CIM_MULTI_CONDITIONAL);
+				if (prevResultRelInfo != resultRelInfo)
+				{
+					/* Determine which triggers exist on this partition */
+					has_before_insert_row_trig = (resultRelInfo->ri_TrigDesc &&
+												resultRelInfo->ri_TrigDesc->trig_insert_before_row);
 
-				batchslot = CopyMultiInsertInfoNextFreeSlot(&multiInsertInfo,
-															resultRelInfo);
+					has_instead_insert_row_trig = (resultRelInfo->ri_TrigDesc &&
+												resultRelInfo->ri_TrigDesc->trig_insert_instead_row);
 
-				if (map != NULL)
-					myslot = execute_attr_map_slot(map->attrMap, myslot,
-												   batchslot);
+					/*
+					* Disable multi-inserts when the partition has BEFORE/INSTEAD
+					* OF triggers, or if the partition is a foreign partition.
+					*/
+					leafpart_use_multi_insert = insertMethod == CIM_MULTI_CONDITIONAL &&
+						!has_before_insert_row_trig &&
+						!has_instead_insert_row_trig &&
+						resultRelInfo->ri_FdwRoutine == NULL;
+
+					/* Set the multi-insert buffer to use for this partition. */
+					if (leafpart_use_multi_insert)
+					{
+						if (resultRelInfo->ri_CopyMultiInsertBuffer == NULL)
+							CopyMultiInsertInfoSetupBuffer(&multiInsertInfo,
+														resultRelInfo);
+					}
+					else if (insertMethod == CIM_MULTI_CONDITIONAL &&
+							!CopyMultiInsertInfoIsEmpty(&multiInsertInfo))
+					{
+						/*
+						* Flush pending inserts if this partition can't use
+						* batching, so rows are visible to triggers etc.
+						*/
+						CopyMultiInsertInfoFlush(&multiInsertInfo, resultRelInfo);
+					}
+
+					if (bistate != NULL)
+						ReleaseBulkInsertStatePin(bistate);
+					prevResultRelInfo = resultRelInfo;
+				}
+
+				/*
+				* If we're capturing transition tuples, we might need to convert
+				* from the partition rowtype to root rowtype. But if there are no
+				* BEFORE triggers on the partition that could change the tuple,
+				* we can just remember the original unconverted tuple to avoid a
+				* needless round trip conversion.
+				*/
+				if (cstate->transition_capture != NULL)
+					cstate->transition_capture->tcs_original_insert_tuple =
+						!has_before_insert_row_trig ? myslot : NULL;
+
+				/*
+				* We might need to convert from the root rowtype to the partition
+				* rowtype.
+				*/
+				map = resultRelInfo->ri_RootToPartitionMap;
+				if (insertMethod == CIM_SINGLE || !leafpart_use_multi_insert)
+				{
+					/* non batch insert */
+					if (map != NULL)
+					{
+						TupleTableSlot *new_slot;
+
+						new_slot = resultRelInfo->ri_PartitionTupleSlot;
+						myslot = execute_attr_map_slot(map->attrMap, myslot, new_slot);
+					}
+				}
 				else
 				{
 					/*
-					 * This looks more expensive than it is (Believe me, I
-					 * optimized it away. Twice.). The input is in virtual
-					 * form, and we'll materialize the slot below - for most
-					 * slot types the copy performs the work materialization
-					 * would later require anyway.
-					 */
-					ExecCopySlot(batchslot, myslot);
-					myslot = batchslot;
-				}
-			}
+					* Prepare to queue up tuple for later batch insert into
+					* current partition.
+					*/
+					TupleTableSlot *batchslot;
 
-			/* ensure that triggers etc see the right relation  */
-			myslot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
-		}
+					/* no other path available for partitioned table */
+					Assert(insertMethod == CIM_MULTI_CONDITIONAL);
 
-		skip_tuple = false;
+					batchslot = CopyMultiInsertInfoNextFreeSlot(&multiInsertInfo,
+																resultRelInfo);
 
-		/* BEFORE ROW INSERT Triggers */
-		if (has_before_insert_row_trig)
-		{
-			if (!ExecBRInsertTriggers(estate, resultRelInfo, myslot))
-				skip_tuple = true;	/* "do nothing" */
-		}
-
-		if (!skip_tuple)
-		{
-			/*
-			 * If there is an INSTEAD OF INSERT ROW trigger, let it handle the
-			 * tuple.  Otherwise, proceed with inserting the tuple into the
-			 * table or foreign table.
-			 */
-			if (has_instead_insert_row_trig)
-			{
-				ExecIRInsertTriggers(estate, resultRelInfo, myslot);
-			}
-			else
-			{
-				/* Compute stored generated columns */
-				if (resultRelInfo->ri_RelationDesc->rd_att->constr &&
-					resultRelInfo->ri_RelationDesc->rd_att->constr->has_generated_stored)
-					ExecComputeStoredGenerated(resultRelInfo, estate, myslot,
-											   CMD_INSERT);
-
-				/*
-				 * If the target is a plain table, check the constraints of
-				 * the tuple.
-				 */
-				if (resultRelInfo->ri_FdwRoutine == NULL &&
-					resultRelInfo->ri_RelationDesc->rd_att->constr)
-				{
-					if (cstate->opts.ignore_errors)
+					if (map != NULL)
+						myslot = execute_attr_map_slot(map->attrMap, myslot,
+													batchslot);
+					else
 					{
-						safeExecConstraints(cstate, resultRelInfo, myslot, estate);
+						/*
+						* This looks more expensive than it is (Believe me, I
+						* optimized it away. Twice.). The input is in virtual
+						* form, and we'll materialize the slot below - for most
+						* slot types the copy performs the work materialization
+						* would later require anyway.
+						*/
+						ExecCopySlot(batchslot, myslot);
+						myslot = batchslot;
+					}
+				}
 
-						if (cstate->sfcstate->skip_row)
+				/* ensure that triggers etc see the right relation  */
+				myslot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
+			}
+
+			skip_tuple = false;
+
+			/* BEFORE ROW INSERT Triggers */
+			if (has_before_insert_row_trig)
+			{
+				if (!ExecBRInsertTriggers(estate, resultRelInfo, myslot))
+					skip_tuple = true;	/* "do nothing" */
+			}
+
+			if (!skip_tuple)
+			{
+				/*
+				* If there is an INSTEAD OF INSERT ROW trigger, let it handle the
+				* tuple.  Otherwise, proceed with inserting the tuple into the
+				* table or foreign table.
+				*/
+				if (has_instead_insert_row_trig)
+				{
+					ExecIRInsertTriggers(estate, resultRelInfo, myslot);
+				}
+				else
+				{
+					/* Compute stored generated columns */
+					if (resultRelInfo->ri_RelationDesc->rd_att->constr &&
+						resultRelInfo->ri_RelationDesc->rd_att->constr->has_generated_stored)
+						ExecComputeStoredGenerated(resultRelInfo, estate, myslot,
+												CMD_INSERT);
+
+					/*
+					* If the target is a plain table, check the constraints of
+					* the tuple.
+					*/
+					if (resultRelInfo->ri_FdwRoutine == NULL &&
+						resultRelInfo->ri_RelationDesc->rd_att->constr)
+					{
+						PG_TRY();
+						{
+							ExecConstraints(resultRelInfo, myslot, estate);
+						}
+						PG_CATCH();
+						{
+							MemoryContext ecxt = MemoryContextSwitchTo(sfcstate->oldcontext);
+							ErrorData *errdata = CopyErrorData();
+
+							RollbackAndReleaseCurrentSubTransaction();
+							CurrentResourceOwner = sfcstate->oldowner;
+							elog(WARNING, "ROLLBACK CONSTRAINTS");
+
+							sfcstate->begin_subtransaction = true;
+
+							switch (errdata->sqlerrcode)
+							{
+								/* Ignore constraint violations */
+								case ERRCODE_INTEGRITY_CONSTRAINT_VIOLATION:
+								case ERRCODE_RESTRICT_VIOLATION:
+								case ERRCODE_NOT_NULL_VIOLATION:
+								case ERRCODE_FOREIGN_KEY_VIOLATION:
+								case ERRCODE_UNIQUE_VIOLATION:
+								case ERRCODE_CHECK_VIOLATION:
+								case ERRCODE_EXCLUSION_VIOLATION:
+									sfcstate->errors++;
+									if (sfcstate->errors <= 100)
+										ereport(WARNING,
+												(errcode(errdata->sqlerrcode),
+												errmsg("%s", errdata->detail)));
+
+									sfcstate->begin_subtransaction = true;
+									sfcstate->skip_row = true;
+
+									break;
+								default:
+									PG_RE_THROW();
+							}
+
+							FlushErrorState();
+							FreeErrorData(errdata);
+							errdata = NULL;
+
+							MemoryContextSwitchTo(ecxt);
+						}
+						PG_END_TRY();
+
+						if (sfcstate->skip_row == true)
 							continue;
 					}
+
+					/*
+					* Also check the tuple against the partition constraint, if
+					* there is one; except that if we got here via tuple-routing,
+					* we don't need to if there's no BR trigger defined on the
+					* partition.
+					*/
+					if (resultRelInfo->ri_RelationDesc->rd_rel->relispartition &&
+						(proute == NULL || has_before_insert_row_trig))
+						ExecPartitionCheck(resultRelInfo, myslot, estate, true);
+
+					if (!sfcstate->replay_is_active)
+					{
+						HeapTuple saved_tuple;
+						MemoryContext cxt;
+
+						/* Filling replay_buffer in replay_cxt*/
+						cxt = MemoryContextSwitchTo(sfcstate->replay_cxt);
+						saved_tuple = heap_form_tuple(RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
+						sfcstate->replay_buffer[sfcstate->saved_tuples++] = saved_tuple;
+						MemoryContextSwitchTo(cxt);
+
+						sfcstate->skip_row = true;
+
+						elog(WARNING, "MYSLOT VALUES: %ld", myslot->tts_values[0]);
+						if (sfcstate->skip_row)
+							continue;
+					}
+
+					if (sfcstate->replay_is_active)
+						elog(WARNING, "REPLAYED VALUES: %ld", myslot->tts_values[0]);
+
+					/* Store the slot in the multi-insert buffer, when enabled. */
+					if (insertMethod == CIM_MULTI || leafpart_use_multi_insert)
+					{
+						/*
+						* The slot previously might point into the per-tuple
+						* context. For batching it needs to be longer lived.
+						*/
+						ExecMaterializeSlot(myslot);
+
+						/* Add this tuple to the tuple buffer */
+						CopyMultiInsertInfoStore(&multiInsertInfo,
+												resultRelInfo, myslot,
+												cstate->line_buf.len,
+												cstate->cur_lineno);
+
+						/*
+						* If enough inserts have queued up, then flush all
+						* buffers out to their tables.
+						*/
+						if (CopyMultiInsertInfoIsFull(&multiInsertInfo))
+							CopyMultiInsertInfoFlush(&multiInsertInfo, resultRelInfo);
+					}
 					else
-						ExecConstraints(resultRelInfo, myslot, estate);
+					{
+						List	   *recheckIndexes = NIL;
+
+						/* OK, store the tuple */
+						if (resultRelInfo->ri_FdwRoutine != NULL)
+						{
+							myslot = resultRelInfo->ri_FdwRoutine->ExecForeignInsert(estate,
+																					resultRelInfo,
+																					myslot,
+																					NULL);
+
+							if (myslot == NULL) /* "do nothing" */
+								continue;	/* next tuple please */
+
+							/*
+							* AFTER ROW Triggers might reference the tableoid
+							* column, so (re-)initialize tts_tableOid before
+							* evaluating them.
+							*/
+							myslot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
+						}
+						else
+						{
+							/* OK, store the tuple and create index entries for it */
+							table_tuple_insert(resultRelInfo->ri_RelationDesc,
+											myslot, mycid, ti_options, bistate);
+
+							if (resultRelInfo->ri_NumIndices > 0)
+								recheckIndexes = ExecInsertIndexTuples(resultRelInfo,
+																	myslot,
+																	estate,
+																	false,
+																	false,
+																	NULL,
+																	NIL);
+						}
+
+						/* AFTER ROW INSERT Triggers */
+						ExecARInsertTriggers(estate, resultRelInfo, myslot,
+											recheckIndexes, cstate->transition_capture);
+
+						list_free(recheckIndexes);
+					}
+
 				}
 
 				/*
-				 * Also check the tuple against the partition constraint, if
-				 * there is one; except that if we got here via tuple-routing,
-				 * we don't need to if there's no BR trigger defined on the
-				 * partition.
-				 */
-				if (resultRelInfo->ri_RelationDesc->rd_rel->relispartition &&
-					(proute == NULL || has_before_insert_row_trig))
-					ExecPartitionCheck(resultRelInfo, myslot, estate, true);
+				* We count only tuples not suppressed by a BEFORE INSERT trigger
+				* or FDW; this is the same definition used by nodeModifyTable.c
+				* for counting tuples inserted by an INSERT command.  Update
+				* progress of the COPY command as well.
+				*/
+				pgstat_progress_update_param(PROGRESS_COPY_TUPLES_PROCESSED,
+											++processed);
+			}
+		}
+		else
+		{
+			if (!NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull))
+				break;
 
-				/* Store the slot in the multi-insert buffer, when enabled. */
-				if (insertMethod == CIM_MULTI || leafpart_use_multi_insert)
+			ExecStoreVirtualTuple(myslot);
+
+			/*
+			 * Constraints and where clause might reference the tableoid column,
+			 * so (re-)initialize tts_tableOid before evaluating them.
+			 */
+			myslot->tts_tableOid = RelationGetRelid(target_resultRelInfo->ri_RelationDesc);
+
+			/* Triggers and stuff need to be invoked in query context. */
+			MemoryContextSwitchTo(oldcontext);
+
+			if (cstate->whereClause)
+			{
+				econtext->ecxt_scantuple = myslot;
+				/* Skip items that don't match COPY's WHERE clause */
+				if (!ExecQual(cstate->qualexpr, econtext))
 				{
 					/*
-					 * The slot previously might point into the per-tuple
-					 * context. For batching it needs to be longer lived.
+					 * Report that this tuple was filtered out by the WHERE
+					 * clause.
 					 */
-					ExecMaterializeSlot(myslot);
-
-					/* Add this tuple to the tuple buffer */
-					CopyMultiInsertInfoStore(&multiInsertInfo,
-											 resultRelInfo, myslot,
-											 cstate->line_buf.len,
-											 cstate->cur_lineno);
-
-					/*
-					 * If enough inserts have queued up, then flush all
-					 * buffers out to their tables.
-					 */
-					if (CopyMultiInsertInfoIsFull(&multiInsertInfo))
-						CopyMultiInsertInfoFlush(&multiInsertInfo, resultRelInfo);
-				}
-				else
-				{
-					List	   *recheckIndexes = NIL;
-
-					/* OK, store the tuple */
-					if (resultRelInfo->ri_FdwRoutine != NULL)
-					{
-						myslot = resultRelInfo->ri_FdwRoutine->ExecForeignInsert(estate,
-																				 resultRelInfo,
-																				 myslot,
-																				 NULL);
-
-						if (myslot == NULL) /* "do nothing" */
-							continue;	/* next tuple please */
-
-						/*
-						 * AFTER ROW Triggers might reference the tableoid
-						 * column, so (re-)initialize tts_tableOid before
-						 * evaluating them.
-						 */
-						myslot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
-					}
-					else
-					{
-						/* OK, store the tuple and create index entries for it */
-						table_tuple_insert(resultRelInfo->ri_RelationDesc,
-										   myslot, mycid, ti_options, bistate);
-
-						if (resultRelInfo->ri_NumIndices > 0)
-							recheckIndexes = ExecInsertIndexTuples(resultRelInfo,
-																   myslot,
-																   estate,
-																   false,
-																   false,
-																   NULL,
-																   NIL);
-					}
-
-					/* AFTER ROW INSERT Triggers */
-					ExecARInsertTriggers(estate, resultRelInfo, myslot,
-										 recheckIndexes, cstate->transition_capture);
-
-					list_free(recheckIndexes);
+					pgstat_progress_update_param(PROGRESS_COPY_TUPLES_EXCLUDED,
+												++excluded);
+					continue;
 				}
 			}
 
-			/*
-			 * We count only tuples not suppressed by a BEFORE INSERT trigger
-			 * or FDW; this is the same definition used by nodeModifyTable.c
-			 * for counting tuples inserted by an INSERT command.  Update
-			 * progress of the COPY command as well.
-			 */
-			pgstat_progress_update_param(PROGRESS_COPY_TUPLES_PROCESSED,
-										 ++processed);
+			/* Determine the partition to insert the tuple into */
+			if (proute)
+			{
+				TupleConversionMap *map;
+
+				/*
+				* Attempt to find a partition suitable for this tuple.
+				* ExecFindPartition() will raise an error if none can be found or
+				* if the found partition is not suitable for INSERTs.
+				*/
+				resultRelInfo = ExecFindPartition(mtstate, target_resultRelInfo,
+												proute, myslot, estate);
+
+				if (prevResultRelInfo != resultRelInfo)
+				{
+					/* Determine which triggers exist on this partition */
+					has_before_insert_row_trig = (resultRelInfo->ri_TrigDesc &&
+												resultRelInfo->ri_TrigDesc->trig_insert_before_row);
+
+					has_instead_insert_row_trig = (resultRelInfo->ri_TrigDesc &&
+												resultRelInfo->ri_TrigDesc->trig_insert_instead_row);
+
+					/*
+					* Disable multi-inserts when the partition has BEFORE/INSTEAD
+					* OF triggers, or if the partition is a foreign partition.
+					*/
+					leafpart_use_multi_insert = insertMethod == CIM_MULTI_CONDITIONAL &&
+						!has_before_insert_row_trig &&
+						!has_instead_insert_row_trig &&
+						resultRelInfo->ri_FdwRoutine == NULL;
+
+					/* Set the multi-insert buffer to use for this partition. */
+					if (leafpart_use_multi_insert)
+					{
+						if (resultRelInfo->ri_CopyMultiInsertBuffer == NULL)
+							CopyMultiInsertInfoSetupBuffer(&multiInsertInfo,
+														resultRelInfo);
+					}
+					else if (insertMethod == CIM_MULTI_CONDITIONAL &&
+							!CopyMultiInsertInfoIsEmpty(&multiInsertInfo))
+					{
+						/*
+						* Flush pending inserts if this partition can't use
+						* batching, so rows are visible to triggers etc.
+						*/
+						CopyMultiInsertInfoFlush(&multiInsertInfo, resultRelInfo);
+					}
+
+					if (bistate != NULL)
+						ReleaseBulkInsertStatePin(bistate);
+					prevResultRelInfo = resultRelInfo;
+				}
+
+				/*
+				* If we're capturing transition tuples, we might need to convert
+				* from the partition rowtype to root rowtype. But if there are no
+				* BEFORE triggers on the partition that could change the tuple,
+				* we can just remember the original unconverted tuple to avoid a
+				* needless round trip conversion.
+				*/
+				if (cstate->transition_capture != NULL)
+					cstate->transition_capture->tcs_original_insert_tuple =
+						!has_before_insert_row_trig ? myslot : NULL;
+
+				/*
+				* We might need to convert from the root rowtype to the partition
+				* rowtype.
+				*/
+				map = resultRelInfo->ri_RootToPartitionMap;
+				if (insertMethod == CIM_SINGLE || !leafpart_use_multi_insert)
+				{
+					/* non batch insert */
+					if (map != NULL)
+					{
+						TupleTableSlot *new_slot;
+
+						new_slot = resultRelInfo->ri_PartitionTupleSlot;
+						myslot = execute_attr_map_slot(map->attrMap, myslot, new_slot);
+					}
+				}
+				else
+				{
+					/*
+					* Prepare to queue up tuple for later batch insert into
+					* current partition.
+					*/
+					TupleTableSlot *batchslot;
+
+					/* no other path available for partitioned table */
+					Assert(insertMethod == CIM_MULTI_CONDITIONAL);
+
+					batchslot = CopyMultiInsertInfoNextFreeSlot(&multiInsertInfo,
+																resultRelInfo);
+
+					if (map != NULL)
+						myslot = execute_attr_map_slot(map->attrMap, myslot,
+													batchslot);
+					else
+					{
+						/*
+						* This looks more expensive than it is (Believe me, I
+						* optimized it away. Twice.). The input is in virtual
+						* form, and we'll materialize the slot below - for most
+						* slot types the copy performs the work materialization
+						* would later require anyway.
+						*/
+						ExecCopySlot(batchslot, myslot);
+						myslot = batchslot;
+					}
+				}
+
+				/* ensure that triggers etc see the right relation  */
+				myslot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
+			}
+
+			skip_tuple = false;
+
+			/* BEFORE ROW INSERT Triggers */
+			if (has_before_insert_row_trig)
+			{
+				if (!ExecBRInsertTriggers(estate, resultRelInfo, myslot))
+					skip_tuple = true;	/* "do nothing" */
+			}
+
+			if (!skip_tuple)
+			{
+				/*
+				 * If there is an INSTEAD OF INSERT ROW trigger, let it handle the
+				 * tuple.  Otherwise, proceed with inserting the tuple into the
+				 * table or foreign table.
+				 */
+				if (has_instead_insert_row_trig)
+				{
+					ExecIRInsertTriggers(estate, resultRelInfo, myslot);
+				}
+				else
+				{
+					/* Compute stored generated columns */
+					if (resultRelInfo->ri_RelationDesc->rd_att->constr &&
+						resultRelInfo->ri_RelationDesc->rd_att->constr->has_generated_stored)
+						ExecComputeStoredGenerated(resultRelInfo, estate, myslot,
+												CMD_INSERT);
+
+					/*
+					 * If the target is a plain table, check the constraints of
+					 * the tuple.
+					 */
+					if (resultRelInfo->ri_FdwRoutine == NULL &&
+						resultRelInfo->ri_RelationDesc->rd_att->constr)
+						ExecConstraints(resultRelInfo, myslot, estate);
+
+					/*
+					 * Also check the tuple against the partition constraint, if
+					 * there is one; except that if we got here via tuple-routing,
+					 * we don't need to if there's no BR trigger defined on the
+					 * partition.
+					 */
+					if (resultRelInfo->ri_RelationDesc->rd_rel->relispartition &&
+						(proute == NULL || has_before_insert_row_trig))
+						ExecPartitionCheck(resultRelInfo, myslot, estate, true);
+
+					/* Store the slot in the multi-insert buffer, when enabled. */
+					if (insertMethod == CIM_MULTI || leafpart_use_multi_insert)
+					{
+						/*
+						 * The slot previously might point into the per-tuple
+						 * context. For batching it needs to be longer lived.
+						 */
+						ExecMaterializeSlot(myslot);
+
+						/* Add this tuple to the tuple buffer */
+						CopyMultiInsertInfoStore(&multiInsertInfo,
+												resultRelInfo, myslot,
+												cstate->line_buf.len,
+												cstate->cur_lineno);
+
+						/*
+						 * If enough inserts have queued up, then flush all
+						 * buffers out to their tables.
+						 */
+						if (CopyMultiInsertInfoIsFull(&multiInsertInfo))
+							CopyMultiInsertInfoFlush(&multiInsertInfo, resultRelInfo);
+					}
+					else
+					{
+						List	   *recheckIndexes = NIL;
+
+						/* OK, store the tuple */
+						if (resultRelInfo->ri_FdwRoutine != NULL)
+						{
+							myslot = resultRelInfo->ri_FdwRoutine->ExecForeignInsert(estate,
+																					resultRelInfo,
+																					myslot,
+																					NULL);
+
+							if (myslot == NULL) /* "do nothing" */
+								continue;	/* next tuple please */
+
+							/*
+							 * AFTER ROW Triggers might reference the tableoid
+							 * column, so (re-)initialize tts_tableOid before
+							 * evaluating them.
+							 */
+							myslot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
+						}
+						else
+						{
+							/* OK, store the tuple and create index entries for it */
+							table_tuple_insert(resultRelInfo->ri_RelationDesc,
+											myslot, mycid, ti_options, bistate);
+
+							if (resultRelInfo->ri_NumIndices > 0)
+								recheckIndexes = ExecInsertIndexTuples(resultRelInfo,
+																	myslot,
+																	estate,
+																	false,
+																	false,
+																	NULL,
+																	NIL);
+						}
+
+						/* AFTER ROW INSERT Triggers */
+						ExecARInsertTriggers(estate, resultRelInfo, myslot,
+											recheckIndexes, cstate->transition_capture);
+
+						list_free(recheckIndexes);
+					}
+				}
+
+				/*
+				 * We count only tuples not suppressed by a BEFORE INSERT trigger
+				 * or FDW; this is the same definition used by nodeModifyTable.c
+				 * for counting tuples inserted by an INSERT command.  Update
+				 * progress of the COPY command as well.
+				 */
+				pgstat_progress_update_param(PROGRESS_COPY_TUPLES_PROCESSED,
+											++processed);
+			}
 		}
 	}
 
