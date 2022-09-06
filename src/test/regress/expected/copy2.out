@@ -656,7 +656,7 @@ COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS;
 WARNING:  COPY check_ign_err, line 2: "2	{2}	2	2"
 WARNING:  COPY check_ign_err, line 3: "3	{3}"
 WARNING:  COPY check_ign_err, line 4, column n: "a"
-WARNING:  COPY check_ign_err, line 5, column n: "5 {5} 5555555555"
+WARNING:  COPY check_ign_err, line 5, column k: "5555555555"
 WARNING:  COPY check_ign_err, line 6, column n: ""
 WARNING:  COPY check_ign_err, line 7, column m: "{a, 7}"
 WARNING:  Failing row contains (8, {8}, 8).
@@ -678,12 +678,12 @@ CREATE FUNCTION fn_trig_before () RETURNS TRIGGER AS '
   END;
 ' LANGUAGE plpgsql;
 CREATE TRIGGER trig_before BEFORE INSERT ON check_ign_err
-FOR EACH ROW EXECUTE PROCEDURE fn_trig_before();
+  FOR EACH ROW EXECUTE PROCEDURE fn_trig_before();
 COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS;
 WARNING:  COPY check_ign_err, line 2: "2	{2}	2	2"
 WARNING:  COPY check_ign_err, line 3: "3	{3}"
 WARNING:  COPY check_ign_err, line 4, column n: "a"
-WARNING:  COPY check_ign_err, line 5, column n: "5 {5} 5555555555"
+WARNING:  COPY check_ign_err, line 5, column k: "5555555555"
 WARNING:  COPY check_ign_err, line 6, column n: ""
 WARNING:  COPY check_ign_err, line 7, column m: "{a, 7}"
 WARNING:  Failing row contains (8, {8}, 8).
@@ -701,7 +701,7 @@ TRUNCATE trig_test;
 CREATE VIEW check_ign_err_view AS SELECT * FROM check_ign_err;
 CREATE FUNCTION fn_trig_instead_of () RETURNS TRIGGER AS '
   BEGIN
-    INSERT INTO check_ign_err VALUES(NEW.n, NEW.m, NEW.k);
+    INSERT INTO trig_test VALUES(NEW.n, NEW.m);
     RETURN NEW;
   END;
 ' LANGUAGE plpgsql;
@@ -711,7 +711,7 @@ COPY check_ign_err_view FROM STDIN WITH IGNORE_ERRORS;
 WARNING:  COPY check_ign_err_view, line 2: "2	{2}	2	2"
 WARNING:  COPY check_ign_err_view, line 3: "3	{3}"
 WARNING:  COPY check_ign_err_view, line 4, column n: "a"
-WARNING:  COPY check_ign_err_view, line 5, column n: "5 {5} 5555555555"
+WARNING:  COPY check_ign_err_view, line 5, column k: "5555555555"
 WARNING:  COPY check_ign_err_view, line 6, column n: ""
 WARNING:  COPY check_ign_err_view, line 7, column m: "{a, 7}"
 WARNING:  Failing row contains (8, {8}, 8).
@@ -732,7 +732,7 @@ COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS
 WARNING:  COPY check_ign_err, line 2: "2	{2}	2	2"
 WARNING:  COPY check_ign_err, line 3: "3	{3}"
 WARNING:  COPY check_ign_err, line 4, column n: "a"
-WARNING:  COPY check_ign_err, line 5, column n: "5 {5} 5555555555"
+WARNING:  COPY check_ign_err, line 5, column k: "5555555555"
 WARNING:  COPY check_ign_err, line 6, column n: ""
 WARNING:  COPY check_ign_err, line 7, column m: "{a, 7}"
 WARNING:  Failing row contains (8, {8}, 8).
@@ -765,7 +765,7 @@ COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS;
 WARNING:  COPY check_ign_err, line 2: "2	{2}	2	2"
 WARNING:  COPY check_ign_err, line 3: "3	{3}"
 WARNING:  COPY check_ign_err, line 4, column n: "a"
-WARNING:  COPY check_ign_err, line 5, column n: "5 {5} 5555555555"
+WARNING:  COPY check_ign_err, line 5, column k: "5555555555"
 WARNING:  COPY check_ign_err, line 6, column n: ""
 WARNING:  COPY check_ign_err, line 7, column m: "{a, 7}"
 WARNING:  Failing row contains (8, {8}, 8).

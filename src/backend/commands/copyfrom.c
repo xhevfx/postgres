@@ -673,7 +673,6 @@ safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext, Datum *values, boo
 			case ERRCODE_TOO_MANY_JSON_OBJECT_MEMBERS:
 			case ERRCODE_SQL_JSON_SCALAR_REQUIRED:
 			case ERRCODE_SQL_JSON_ITEM_CANNOT_BE_CAST_TO_TARGET_TYPE:
-				elog(WARNING, "ROLLBACK");
 				sfcstate->errors++;
 				if (sfcstate->errors <= 100)
 					ereport(WARNING,
@@ -747,7 +746,6 @@ safeExecConstraints(CopyFromState cstate, ResultRelInfo *resultRelInfo, TupleTab
 
 		RollbackAndReleaseCurrentSubTransaction();
 		CurrentResourceOwner = sfcstate->oldowner;
-		elog(WARNING, "ROLLBACK CONSTRAINTS");
 
 		sfcstate->begin_subtransaction = true;
 
@@ -1159,12 +1157,9 @@ CopyFrom(CopyFromState cstate)
 			{
 				BeginInternalSubTransaction(NULL);
 				CurrentResourceOwner = sfcstate->oldowner;
-				elog(WARNING, "BEGIN");
 
 				sfcstate->begin_subtransaction = false;
 			}
-
-			elog(WARNING, "SAVED_TUPLES, REPLAYED_TUPLES: %d, %d", sfcstate->saved_tuples, sfcstate->replayed_tuples);
 
 			PG_TRY();
 			{
@@ -1194,7 +1189,6 @@ CopyFrom(CopyFromState cstate)
 				{
 					if (sfcstate->replayed_tuples < sfcstate->saved_tuples)
 					{
-						elog(WARNING, "REPLAY");
 						/* Replaying the tuple */
 						MemoryContext cxt = MemoryContextSwitchTo(sfcstate->replay_cxt);
 
@@ -1207,7 +1201,6 @@ CopyFrom(CopyFromState cstate)
 
 						ReleaseCurrentSubTransaction();
 						CurrentResourceOwner = sfcstate->oldowner;
-						elog(WARNING, "COMMIT AND CLEAN UP");
 
 						/* Clean up replay_buffer */
 						MemoryContextReset(sfcstate->replay_cxt);
@@ -1229,7 +1222,6 @@ CopyFrom(CopyFromState cstate)
 
 				RollbackAndReleaseCurrentSubTransaction();
 				CurrentResourceOwner = sfcstate->oldowner;
-				elog(WARNING, "ROLLBACK");
 
 				switch (errdata->sqlerrcode)
 				{
@@ -1495,7 +1487,6 @@ CopyFrom(CopyFromState cstate)
 
 							RollbackAndReleaseCurrentSubTransaction();
 							CurrentResourceOwner = sfcstate->oldowner;
-							elog(WARNING, "ROLLBACK CONSTRAINTS");
 
 							sfcstate->begin_subtransaction = true;
 
@@ -1558,13 +1549,9 @@ CopyFrom(CopyFromState cstate)
 
 						sfcstate->skip_row = true;
 
-						elog(WARNING, "MYSLOT VALUES: %ld", myslot->tts_values[0]);
 						if (sfcstate->skip_row)
 							continue;
 					}
-
-					if (sfcstate->replay_is_active)
-						elog(WARNING, "REPLAYED VALUES: %ld", myslot->tts_values[0]);
 
 					/* Store the slot in the multi-insert buffer, when enabled. */
 					if (insertMethod == CIM_MULTI || leafpart_use_multi_insert)
