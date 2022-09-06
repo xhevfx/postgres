@@ -472,10 +472,10 @@ SELECT * FROM check_ign_err;
 -- CIM_SINGLE cases
 -- BEFORE row trigger
 TRUNCATE check_ign_err;
-CREATE TABLE trig_test(n int, m int[]);
+CREATE TABLE trig_test(n int, m int[], k int);
 CREATE FUNCTION fn_trig_before () RETURNS TRIGGER AS '
   BEGIN
-    INSERT INTO trig_test VALUES(NEW.n, NEW.m);
+    INSERT INTO trig_test VALUES(NEW.n, NEW.m, NEW.k);
     RETURN NEW;
   END;
 ' LANGUAGE plpgsql;
@@ -500,7 +500,7 @@ TRUNCATE trig_test;
 CREATE VIEW check_ign_err_view AS SELECT * FROM check_ign_err;
 CREATE FUNCTION fn_trig_instead_of () RETURNS TRIGGER AS '
   BEGIN
-    INSERT INTO trig_test VALUES(NEW.n, NEW.m);
+    INSERT INTO trig_test VALUES(NEW.n, NEW.m, NEW.k);
     RETURN NEW;
   END;
 ' LANGUAGE plpgsql;
@@ -516,7 +516,7 @@ a	{4}	4
 7	{a, 7}	7
 8	{8}	8
 \.
-SELECT * FROM check_ign_err_view;
+SELECT * FROM trig_test;
 DROP TRIGGER trig_instead_of ON check_ign_err_view;
 DROP VIEW check_ign_err_view;
 
@@ -546,7 +546,7 @@ CREATE TABLE check_ign_err (n int check (n < 8), m int[], k int)
 CREATE TABLE check_ign_err_part1 PARTITION OF check_ign_err
   FOR VALUES FROM (1) TO (4);
 CREATE TABLE check_ign_err_part2 PARTITION OF check_ign_err
-  FOR VALUES FROM (4) TO (8);
+  FOR VALUES FROM (4) TO (9);
 CREATE FUNCTION fn_trig_before_part () RETURNS TRIGGER AS '
   BEGIN
     INSERT INTO trig_test VALUES(NEW.n, NEW.m);
