@@ -61,7 +61,6 @@ typedef struct SafeCopyFromState
 	int				errors;					/* total # of errors */
 	bool			replay_is_active;		/* if true we replay tuples from buffer */
 	bool			begin_subtransaction;	/* if true we can begin subtransaction */
-	bool			processed_remaining_tuples;	/* for case of replaying last tuples */
 	bool			skip_row;
 
 	MemoryContext	replay_cxt;
