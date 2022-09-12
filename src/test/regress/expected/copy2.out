@@ -659,7 +659,7 @@ WARNING:  COPY check_ign_err, line 4, column n: "a"
 WARNING:  COPY check_ign_err, line 5, column k: "5555555555"
 WARNING:  COPY check_ign_err, line 6, column n: ""
 WARNING:  COPY check_ign_err, line 7, column m: "{a, 7}"
-WARNING:  Failing row contains (8, {8}, 8).
+WARNING:  COPY check_ign_err, line 8: "8	{8}	8"
 WARNING:  FIND 7 ERRORS
 SELECT * FROM check_ign_err;
  n |  m  | k 
@@ -686,7 +686,7 @@ WARNING:  COPY check_ign_err, line 4, column n: "a"
 WARNING:  COPY check_ign_err, line 5, column k: "5555555555"
 WARNING:  COPY check_ign_err, line 6, column n: ""
 WARNING:  COPY check_ign_err, line 7, column m: "{a, 7}"
-WARNING:  Failing row contains (8, {8}, 8).
+WARNING:  COPY check_ign_err, line 8: "8	{8}	8"
 WARNING:  FIND 7 ERRORS
 SELECT * FROM check_ign_err;
  n |  m  | k 
@@ -767,7 +767,7 @@ WARNING:  COPY check_ign_err, line 4, column n: "a"
 WARNING:  COPY check_ign_err, line 5, column k: "5555555555"
 WARNING:  COPY check_ign_err, line 6, column n: ""
 WARNING:  COPY check_ign_err, line 7, column m: "{a, 7}"
-WARNING:  Failing row contains (8, {8}, 8).
+WARNING:  COPY check_ign_err, line 8: "8	{8}	8"
 WARNING:  FIND 7 ERRORS
 SELECT * FROM check_ign_err;
  n |  m  | k 

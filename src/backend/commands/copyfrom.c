@@ -890,7 +890,6 @@ CopyFrom(CopyFromState cstate)
 			{
 				BeginInternalSubTransaction(NULL);
 				CurrentResourceOwner = sfcstate->oldowner;
-				elog(WARNING, "BEGIN");
 
 				sfcstate->begin_subtransaction = false;
 			}
@@ -913,7 +912,6 @@ CopyFrom(CopyFromState cstate)
 							{
 								RollbackAndReleaseCurrentSubTransaction();
 								CurrentResourceOwner = sfcstate->oldowner;
-								elog(WARNING, "ROLLBACK TRIGGERS1");
 
 								sfcstate->begin_subtransaction = true;
 							}
@@ -929,7 +927,6 @@ CopyFrom(CopyFromState cstate)
 						{
 							RollbackAndReleaseCurrentSubTransaction();
 							CurrentResourceOwner = sfcstate->oldowner;
-							elog(WARNING, "ROLLBACK TRIGGERS2");
 
 							sfcstate->begin_subtransaction = true;
 						}
@@ -939,7 +936,6 @@ CopyFrom(CopyFromState cstate)
 				{
 					if (sfcstate->replayed_tuples < sfcstate->saved_tuples)
 					{
-						elog(WARNING, "REPLAY");
 						/* Replaying the tuple */
 						MemoryContext cxt = MemoryContextSwitchTo(sfcstate->replay_cxt);
 
@@ -952,7 +948,6 @@ CopyFrom(CopyFromState cstate)
 
 						ReleaseCurrentSubTransaction();
 						CurrentResourceOwner = sfcstate->oldowner;
-						elog(WARNING, "COMMIT AND CLEANUP");
 
 						/* Clean up replay_buffer */
 						MemoryContextReset(sfcstate->replay_cxt);
@@ -962,11 +957,11 @@ CopyFrom(CopyFromState cstate)
 						sfcstate->replay_buffer = (HeapTuple *) palloc(REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
 						MemoryContextSwitchTo(cxt);
 
+						sfcstate->begin_subtransaction = true;
 						sfcstate->replay_is_active = false;
 						sfcstate->skip_row = true;
 					}
 				}
-
 
 				ExecStoreVirtualTuple(myslot);
 
@@ -1122,7 +1117,6 @@ CopyFrom(CopyFromState cstate)
 					*/
 					if (has_instead_insert_row_trig)
 					{
-						elog(WARNING, "PROCESSED %ld", processed);
 						if (sfcstate->replay_is_active)
 						{
 							ExecIRInsertTriggers(estate, resultRelInfo, myslot);
@@ -1137,8 +1131,6 @@ CopyFrom(CopyFromState cstate)
 							saved_tuple = heap_form_tuple(RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
 							sfcstate->replay_buffer[sfcstate->saved_tuples++] = saved_tuple;
 							MemoryContextSwitchTo(cxt);
-
-							elog(WARNING, "ADD TO BUFFER, (%ld)", myslot->tts_values[0]);
 						}
 					}
 					else
@@ -1166,7 +1158,6 @@ CopyFrom(CopyFromState cstate)
 
 				RollbackAndReleaseCurrentSubTransaction();
 				CurrentResourceOwner = sfcstate->oldowner;
-				elog(WARNING, "ROLLBACK");
 
 				switch (errdata->sqlerrcode)
 				{
@@ -1260,7 +1251,6 @@ CopyFrom(CopyFromState cstate)
 
 			if (!skip_tuple && !has_instead_insert_row_trig)
 			{
-				elog(WARNING, "!SKIP_TUPLES");
 				/*
 				 * Also check the tuple against the partition constraint, if
 				 * there is one; except that if we got here via tuple-routing,
@@ -1282,8 +1272,6 @@ CopyFrom(CopyFromState cstate)
 					saved_tuple = heap_form_tuple(RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
 					sfcstate->replay_buffer[sfcstate->saved_tuples++] = saved_tuple;
 					MemoryContextSwitchTo(cxt);
-
-					elog(WARNING, "ADD TO BUFFER2");
 
 					continue;
 				}
