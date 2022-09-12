@@ -106,15 +106,6 @@ static char *limit_printout_length(const char *str);
 
 static void ClosePipeFromProgram(CopyFromState cstate);
 
-/* functions for ignore_errros */
-
-static bool safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext,
-							 Datum *values, bool *nulls);
-
-static void safeExecConstraints(CopyFromState cstate, ResultRelInfo *resultRelInfo,
-								TupleTableSlot *myslot, EState *estate);
-
-
 /*
  * error context callback for COPY FROM
  *
@@ -837,23 +828,16 @@ CopyFrom(CopyFromState cstate)
 		cstate->sfcstate->replay_cxt = AllocSetContextCreate(oldcontext,
 									   "Replay context",
 									   ALLOCSET_DEFAULT_SIZES);
-
-		MemoryContextSwitchTo(cstate->sfcstate->replay_cxt);
-		cstate->sfcstate->replay_buffer = (HeapTuple *) palloc(REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
-		MemoryContextSwitchTo(oldcontext);
-
+		cstate->sfcstate->replay_buffer = MemoryContextAlloc(cstate->sfcstate->replay_cxt,
+						   REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
 		cstate->sfcstate->saved_tuples = 0;
 		cstate->sfcstate->replayed_tuples = 0;
 		cstate->sfcstate->errors = 0;
 		cstate->sfcstate->replay_is_active = false;
 		cstate->sfcstate->begin_subtransaction = true;
-		cstate->sfcstate->processed_remaining_tuples = false;
-
 		cstate->sfcstate->oldowner = oldowner;
 		cstate->sfcstate->oldcontext = oldcontext;
 	}
-
-	SafeCopyFromState *sfcstate = cstate->sfcstate;
 
 	for (;;)
 	{
@@ -897,6 +881,7 @@ CopyFrom(CopyFromState cstate)
 		 */
 		if (cstate->sfcstate)
 		{
+			SafeCopyFromState *sfcstate = cstate->sfcstate;
 			bool	valid_row;
 
 			sfcstate->skip_row = false;
@@ -917,21 +902,19 @@ CopyFrom(CopyFromState cstate)
 					{
 						valid_row = NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull);
 
-						if (!valid_row && !sfcstate->processed_remaining_tuples &&
-							sfcstate->replayed_tuples < sfcstate->saved_tuples)
+						if (!valid_row && sfcstate->replayed_tuples < sfcstate->saved_tuples)
 						{
-								/* Prepare to replay remaining tuples if they exist */
-								sfcstate->replay_is_active = true;
-								sfcstate->processed_remaining_tuples = true;
-								sfcstate->skip_row = true;
+							/* Prepare to replay remaining tuples if they exist */
+							sfcstate->replay_is_active = true;
+							sfcstate->skip_row = true;
 
-								if (has_instead_insert_row_trig)
-								{
-									RollbackAndReleaseCurrentSubTransaction();
-									CurrentResourceOwner = sfcstate->oldowner;
+							if (has_instead_insert_row_trig)
+							{
+								RollbackAndReleaseCurrentSubTransaction();
+								CurrentResourceOwner = sfcstate->oldowner;
 
-									sfcstate->begin_subtransaction = true;
-								}
+								sfcstate->begin_subtransaction = true;
+							}
 						}
 					}
 					else
@@ -974,6 +957,7 @@ CopyFrom(CopyFromState cstate)
 						sfcstate->replay_buffer = (HeapTuple *) palloc(REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
 						MemoryContextSwitchTo(cxt);
 
+						sfcstate->begin_subtransaction = true;
 						sfcstate->replay_is_active = false;
 						sfcstate->skip_row = true;
 					}
@@ -1066,7 +1050,7 @@ CopyFrom(CopyFromState cstate)
 				break;
 			}
 
-			if (sfcstate->skip_row == true)
+			if (sfcstate->skip_row)
 				continue;
 
 			ExecStoreVirtualTuple(myslot);
@@ -1223,55 +1207,9 @@ CopyFrom(CopyFromState cstate)
 				 */
 				if (has_instead_insert_row_trig)
 				{
-					PG_TRY();
-					{
-						ExecIRInsertTriggers(estate, resultRelInfo, myslot);
-					}
-					PG_CATCH();
-					{
-						MemoryContext ecxt = MemoryContextSwitchTo(sfcstate->oldcontext);
-						ErrorData *errdata = CopyErrorData();
+					ExecIRInsertTriggers(estate, resultRelInfo, myslot);
 
-						RollbackAndReleaseCurrentSubTransaction();
-						CurrentResourceOwner = sfcstate->oldowner;
-
-						sfcstate->begin_subtransaction = true;
-
-						switch (errdata->sqlerrcode)
-						{
-							/* Ignore constraint violations */
-							case ERRCODE_INTEGRITY_CONSTRAINT_VIOLATION:
-							case ERRCODE_RESTRICT_VIOLATION:
-							case ERRCODE_NOT_NULL_VIOLATION:
-							case ERRCODE_FOREIGN_KEY_VIOLATION:
-							case ERRCODE_UNIQUE_VIOLATION:
-							case ERRCODE_CHECK_VIOLATION:
-							case ERRCODE_EXCLUSION_VIOLATION:
-								sfcstate->errors++;
-								if (sfcstate->errors <= 100)
-									ereport(WARNING,
-											(errcode(errdata->sqlerrcode),
-											errmsg("%s", errdata->detail)));
-
-								sfcstate->begin_subtransaction = true;
-								sfcstate->skip_row = true;
-
-								break;
-							default:
-								PG_RE_THROW();
-						}
-
-						FlushErrorState();
-						FreeErrorData(errdata);
-						errdata = NULL;
-
-						MemoryContextSwitchTo(ecxt);
-					}
-					PG_END_TRY();
-
-					if (sfcstate->skip_row == true)
-						continue;
-
+					/* Insert tuple into replay_buffer */
 					if (!sfcstate->replay_is_active)
 					{
 						HeapTuple saved_tuple;
@@ -1298,16 +1236,14 @@ CopyFrom(CopyFromState cstate)
 												CMD_INSERT);
 
 					/*
-					* If the target is a plain table, check the constraints of
-					* the tuple.
-					*/
+					 * If the target is a plain table, check the constraints of
+					 * the tuple.
+					 */
 					if (resultRelInfo->ri_FdwRoutine == NULL &&
 						resultRelInfo->ri_RelationDesc->rd_att->constr)
 					{
 						PG_TRY();
-						{
 							ExecConstraints(resultRelInfo, myslot, estate);
-						}
 						PG_CATCH();
 						{
 							MemoryContext ecxt = MemoryContextSwitchTo(sfcstate->oldcontext);
@@ -1364,12 +1300,13 @@ CopyFrom(CopyFromState cstate)
 						(proute == NULL || has_before_insert_row_trig))
 						ExecPartitionCheck(resultRelInfo, myslot, estate, true);
 
+					/* Insert tuple into replay_buffer */
 					if (!sfcstate->replay_is_active)
 					{
 						HeapTuple saved_tuple;
 						MemoryContext cxt;
 
-						/* Filling replay_buffer in replay_cxt*/
+						/* Filling replay_buffer in replay_cxt */
 						cxt = MemoryContextSwitchTo(sfcstate->replay_cxt);
 						saved_tuple = heap_form_tuple(RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
 						sfcstate->replay_buffer[sfcstate->saved_tuples++] = saved_tuple;
