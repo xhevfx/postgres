@@ -18,7 +18,6 @@
 #include "commands/trigger.h"
 #include "utils/resowner.h"
 
-
 /*
  * Represents the different source cases we need to worry about at
  * the bottom level
@@ -51,7 +50,9 @@ typedef enum CopyInsertMethod
 	CIM_MULTI_CONDITIONAL		/* use table_multi_insert only if valid */
 } CopyInsertMethod;
 
-/* Struct that holding fields for ignore_errors option. */
+/*
+ * Struct that holding fields for ignore_errors option
+ */
 typedef struct SafeCopyFromState
 {
 #define			REPLAY_BUFFER_SIZE 1000
@@ -61,7 +62,6 @@ typedef struct SafeCopyFromState
 	int				errors;					/* total # of errors */
 	bool			replay_is_active;		/* if true we replay tuples from buffer */
 	bool			begin_subxact;			/* if true we can begin subtransaction */
-	bool			end;
 
 	MemoryContext	replay_cxt;
 	MemoryContext	oldcontext;
