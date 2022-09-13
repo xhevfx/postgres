@@ -456,8 +456,8 @@ COMMIT;
 
 -- tests for IGNORE_ERRORS option
 -- CIM_MULTI case
-CREATE TABLE check_ign_err (n int check (n < 8), m int[], k int);
-COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS;
+CREATE TABLE check_ign_err (n int, m int[], k int);
+COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS WHERE n < 10;
 1	{1}	1
 2	{2}	2	2
 3	{3}
@@ -481,7 +481,7 @@ CREATE FUNCTION fn_trig_before () RETURNS TRIGGER AS '
 ' LANGUAGE plpgsql;
 CREATE TRIGGER trig_before BEFORE INSERT ON check_ign_err
 FOR EACH ROW EXECUTE PROCEDURE fn_trig_before();
-COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS;
+COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS WHERE n < 10;
 1	{1}	1
 2	{2}	2	2
 3	{3}
@@ -506,7 +506,7 @@ CREATE FUNCTION fn_trig_instead_of () RETURNS TRIGGER AS '
 ' LANGUAGE plpgsql;
 CREATE TRIGGER trig_instead_of INSTEAD OF INSERT ON check_ign_err_view
 FOR EACH ROW EXECUTE PROCEDURE fn_trig_instead_of();
-COPY check_ign_err_view FROM STDIN WITH IGNORE_ERRORS;
+COPY check_ign_err_view FROM STDIN WITH IGNORE_ERRORS WHERE n < 10;
 1	{1}	1
 2	{2}	2	2
 3	{3}
@@ -516,7 +516,7 @@ a	{4}	4
 7	{a, 7}	7
 8	{8}	8
 \.
-SELECT * FROM check_ign_err_view;
+SELECT * FROM trig_test;
 DROP TRIGGER trig_instead_of ON check_ign_err_view;
 DROP VIEW check_ign_err_view;
 
@@ -541,12 +541,12 @@ DROP TABLE check_ign_err;
 -- CIM_MULTI_CONDITIONAL case
 -- INSERT triggers for partition tables
 TRUNCATE trig_test;
-CREATE TABLE check_ign_err (n int check (n < 8), m int[], k int)
+CREATE TABLE check_ign_err (n int, m int[], k int)
   PARTITION BY RANGE (k);
 CREATE TABLE check_ign_err_part1 PARTITION OF check_ign_err
   FOR VALUES FROM (1) TO (4);
 CREATE TABLE check_ign_err_part2 PARTITION OF check_ign_err
-  FOR VALUES FROM (4) TO (8);
+  FOR VALUES FROM (4) TO (9);
 CREATE FUNCTION fn_trig_before_part () RETURNS TRIGGER AS '
   BEGIN
     INSERT INTO trig_test VALUES(NEW.n, NEW.m);
@@ -555,7 +555,7 @@ CREATE FUNCTION fn_trig_before_part () RETURNS TRIGGER AS '
 ' LANGUAGE plpgsql;
 CREATE TRIGGER trig_before_part BEFORE INSERT ON check_ign_err
 FOR EACH ROW EXECUTE PROCEDURE fn_trig_before_part();
-COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS;
+COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS WHERE n < 10;
 1	{1}	1
 2	{2}	2	2
 3	{3}
