@@ -78,6 +78,8 @@ extern CopyFromState BeginCopyFrom(ParseState *pstate, Relation rel, Node *where
 								   const char *filename,
 								   bool is_program, copy_data_source_cb data_source_cb, List *attnamelist, List *options);
 extern void EndCopyFrom(CopyFromState cstate);
+extern bool safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext,
+							 Datum *values, bool *nulls);
 extern bool NextCopyFrom(CopyFromState cstate, ExprContext *econtext,
 						 Datum *values, bool *nulls);
 extern bool NextCopyFromRawFields(CopyFromState cstate,

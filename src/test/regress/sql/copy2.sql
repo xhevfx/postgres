@@ -457,7 +457,7 @@ COMMIT;
 -- tests for IGNORE_ERRORS option
 -- CIM_MULTI case
 CREATE TABLE check_ign_err (n int, m int[], k int);
-COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS WHERE n < 10;
+COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS WHERE n < 9;
 1	{1}	1
 2	{2}	2	2
 3	{3}
@@ -481,7 +481,7 @@ CREATE FUNCTION fn_trig_before () RETURNS TRIGGER AS '
 ' LANGUAGE plpgsql;
 CREATE TRIGGER trig_before BEFORE INSERT ON check_ign_err
 FOR EACH ROW EXECUTE PROCEDURE fn_trig_before();
-COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS WHERE n < 10;
+COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS WHERE n < 9;
 1	{1}	1
 2	{2}	2	2
 3	{3}
@@ -506,7 +506,7 @@ CREATE FUNCTION fn_trig_instead_of () RETURNS TRIGGER AS '
 ' LANGUAGE plpgsql;
 CREATE TRIGGER trig_instead_of INSTEAD OF INSERT ON check_ign_err_view
 FOR EACH ROW EXECUTE PROCEDURE fn_trig_instead_of();
-COPY check_ign_err_view FROM STDIN WITH IGNORE_ERRORS WHERE n < 10;
+COPY check_ign_err_view FROM STDIN WITH IGNORE_ERRORS WHERE n < 9;
 1	{1}	1
 2	{2}	2	2
 3	{3}
@@ -520,12 +520,12 @@ SELECT * FROM trig_test;
 DROP TRIGGER trig_instead_of ON check_ign_err_view;
 DROP VIEW check_ign_err_view;
 
--- foreign table case in postgres_fdw extension
+-- foreign table case is in postgres_fdw extension
 
 -- volatile function in WHERE clause
 TRUNCATE check_ign_err;
 COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS
-  WHERE n = floor(random()*(1-1+1))+1; /* find values equal 1 */
+  WHERE n = floor(random()*(1-1+1))+1; /* finds values equal 1 */
 1	{1}	1
 2	{2}	2	2
 3	{3}
@@ -555,7 +555,7 @@ CREATE FUNCTION fn_trig_before_part () RETURNS TRIGGER AS '
 ' LANGUAGE plpgsql;
 CREATE TRIGGER trig_before_part BEFORE INSERT ON check_ign_err
 FOR EACH ROW EXECUTE PROCEDURE fn_trig_before_part();
-COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS WHERE n < 10;
+COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS WHERE n < 9;
 1	{1}	1
 2	{2}	2	2
 3	{3}
