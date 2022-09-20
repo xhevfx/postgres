@@ -456,14 +456,14 @@ COMMIT;
 
 -- tests for IGNORE_ERRORS option
 -- CIM_MULTI case
-CREATE TABLE check_ign_err (n int check (n < 8), m int[], k int);
-COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS;
+CREATE TABLE check_ign_err (n int check (n != 6), m int[], k int);
+COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS WHERE n < 9;
 1	{1}	1
 2	{2}	2	2
 3	{3}
 a	{4}	4
 5	{5}	5555555555
-
+6	{6}	6
 7	{a, 7}	7
 8	{8}	8
 \.
@@ -481,13 +481,13 @@ CREATE FUNCTION fn_trig_before () RETURNS TRIGGER AS '
 ' LANGUAGE plpgsql;
 CREATE TRIGGER trig_before BEFORE INSERT ON check_ign_err
   FOR EACH ROW EXECUTE PROCEDURE fn_trig_before();
-COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS;
+COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS WHERE n < 9;
 1	{1}	1
 2	{2}	2	2
 3	{3}
 a	{4}	4
 5	{5}	5555555555
-
+6	{6}	6
 7	{a, 7}	7
 8	{8}	8
 \.
@@ -506,13 +506,13 @@ CREATE FUNCTION fn_trig_instead_of () RETURNS TRIGGER AS '
 ' LANGUAGE plpgsql;
 CREATE TRIGGER trig_instead_of INSTEAD OF INSERT ON check_ign_err_view
   FOR EACH ROW EXECUTE PROCEDURE fn_trig_instead_of();
-COPY check_ign_err_view FROM STDIN WITH IGNORE_ERRORS;
+COPY check_ign_err_view FROM STDIN WITH IGNORE_ERRORS WHERE n < 9;
 1	{1}	1
 2	{2}	2	2
 3	{3}
 a	{4}	4
 5	{5}	5555555555
-
+6	{6}	6
 7	{a, 7}	7
 8	{8}	8
 \.
@@ -520,18 +520,18 @@ SELECT * FROM trig_test;
 DROP TRIGGER trig_instead_of ON check_ign_err_view;
 DROP VIEW check_ign_err_view;
 
--- foreign table case in postgres_fdw extension
+-- foreign table case is in postgres_fdw extension
 
 -- volatile function in WHERE clause
 TRUNCATE check_ign_err;
 COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS
-  WHERE n = floor(random()*(1-1+1))+1; /* find values equal 1 */
+  WHERE n = floor(random()*(1-1+1))+1; /* finds values equal 1 */
 1	{1}	1
 2	{2}	2	2
 3	{3}
 a	{4}	4
 5	{5}	5555555555
-
+6	{6}	6
 7	{a, 7}	7
 8	{8}	8
 \.
@@ -541,7 +541,7 @@ DROP TABLE check_ign_err;
 -- CIM_MULTI_CONDITIONAL case
 -- INSERT triggers for partition tables
 TRUNCATE trig_test;
-CREATE TABLE check_ign_err (n int check (n < 8), m int[], k int)
+CREATE TABLE check_ign_err (n int check (n != 6), m int[], k int)
   PARTITION BY RANGE (k);
 CREATE TABLE check_ign_err_part1 PARTITION OF check_ign_err
   FOR VALUES FROM (1) TO (4);
@@ -555,13 +555,13 @@ CREATE FUNCTION fn_trig_before_part () RETURNS TRIGGER AS '
 ' LANGUAGE plpgsql;
 CREATE TRIGGER trig_before_part BEFORE INSERT ON check_ign_err
   FOR EACH ROW EXECUTE PROCEDURE fn_trig_before_part();
-COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS;
+COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS WHERE n < 9;
 1	{1}	1
 2	{2}	2	2
 3	{3}
 a	{4}	4
 5	{5}	5555555555
-
+6	{6}	6
 7	{a, 7}	7
 8	{8}	8
 \.

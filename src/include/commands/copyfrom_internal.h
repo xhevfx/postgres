@@ -18,7 +18,6 @@
 #include "commands/trigger.h"
 #include "utils/resowner.h"
 
-
 /*
  * Represents the different source cases we need to worry about at
  * the bottom level
@@ -60,8 +59,9 @@ typedef struct SafeCopyFromState
 	int 			replayed_tuples;		/* # of tuples was replayed from buffer */
 	int				errors;					/* total # of errors */
 	bool			replay_is_active;		/* if true we replay tuples from buffer */
-	bool			begin_subtransaction;	/* if true we can begin subtransaction */
-	bool			skip_row;
+	bool			begin_subxact;			/* if true we can begin subtransaction */
+	bool			tuple_is_valid;
+	bool			has_instead_insert_row_trig;
 
 	MemoryContext	replay_cxt;
 	MemoryContext	oldcontext;
