@@ -876,8 +876,13 @@ safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext, Datum *values, boo
 					MemoryContextSwitchTo(cxt);
 				}
 				else if (sfcstate->replayed_tuples < sfcstate->saved_tuples)
-					/* Prepare for replaying remaining tuples if they exist */
+				{
+					/* Commit subtransaction and prepare for replaying remaining tuples if they exist */
+					ReleaseCurrentSubTransaction();
+					CurrentResourceOwner = sfcstate->oldowner;
+
 					sfcstate->replay_is_active = true;
+				}
 				else
 				{
 					ReleaseCurrentSubTransaction();
@@ -897,8 +902,13 @@ safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext, Datum *values, boo
 				}
 			}
 			else
-				/* Buffer was filled, prepare for replaying */
+			{
+				/* Buffer was filled, commit subtransaction and prepare for replaying */
+				ReleaseCurrentSubTransaction();
+				CurrentResourceOwner = sfcstate->oldowner;
+
 				sfcstate->replay_is_active = true;
+			}
 		}
 
 		if (sfcstate->replay_is_active)
@@ -919,9 +929,6 @@ safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext, Datum *values, boo
 
 				cstate->sfcstate->replay_buffer = MemoryContextAlloc(cstate->sfcstate->replay_cxt,
 												  REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
-
-				ReleaseCurrentSubTransaction();
-				CurrentResourceOwner = sfcstate->oldowner;
 
 				sfcstate->begin_subxact = true;
 				sfcstate->replay_is_active = false;
