@@ -62,7 +62,7 @@
  * memory requirements during copies into partitioned tables with a large
  * number of partitions.
  */
-#define MAX_BUFFERED_TUPLES		10
+#define MAX_BUFFERED_TUPLES		1000
 
 /*
  * Flush buffers if there are >= this many bytes, as counted by the input
@@ -108,9 +108,7 @@ static void ClosePipeFromProgram(CopyFromState cstate);
 
 static bool IgnoreErrors(CopyFromState cstate, EState *estate,
 						 ExprContext *econtext, PartitionTupleRouting *proute,
-						 CopyMultiInsertInfo *multiInsertInfo,
-						 CopyInsertMethod insertMethod, TupleTableSlot *singleslot,
-						 ResultRelInfo *resultRelInfo, ResultRelInfo *target_resultRelInfo);
+						 CopyMultiInsertInfo *multiInsertInfo);
 
 /*
  * error context callback for COPY FROM
@@ -533,9 +531,7 @@ CopyMultiInsertInfoStore(CopyMultiInsertInfo *miinfo, ResultRelInfo *rri,
 static bool
 IgnoreErrors(CopyFromState cstate, EState *estate,
 			 ExprContext *econtext, PartitionTupleRouting *proute,
-			 CopyMultiInsertInfo *multiInsertInfo,
-			 CopyInsertMethod insertMethod, TupleTableSlot *singleslot,
-			 ResultRelInfo *resultRelInfo, ResultRelInfo *target_resultRelInfo)
+			 CopyMultiInsertInfo *multiInsertInfo)
 {
 	SafeCopyFromState *sfcstate = cstate->sfcstate;
 
@@ -550,18 +546,18 @@ IgnoreErrors(CopyFromState cstate, EState *estate,
 		ResetPerTupleExprContext(estate);
 
 		/* select slot to (initially) load row into */
-		if (insertMethod == CIM_SINGLE || proute)
+		if (sfcstate->insertMethod == CIM_SINGLE || proute)
 		{
-			sfcstate->myslot = singleslot;
+			sfcstate->myslot = sfcstate->singleslot;
 			Assert(sfcstate->myslot != NULL);
 		}
 		else
 		{
-			Assert(resultRelInfo == target_resultRelInfo);
-			Assert(insertMethod == CIM_MULTI);
+			Assert(sfcstate->resultRelInfo == sfcstate->target_resultRelInfo);
+			Assert(sfcstate->insertMethod == CIM_MULTI);
 
 			sfcstate->myslot = CopyMultiInsertInfoNextFreeSlot(multiInsertInfo,
-															   resultRelInfo);
+															   sfcstate->resultRelInfo);
 		}
 
 		/*
@@ -584,7 +580,7 @@ IgnoreErrors(CopyFromState cstate, EState *estate,
 
 			if (sfcstate->saved_tuples < REPLAY_BUFFER_SIZE)
 			{
-				MemoryContext cxt = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
+				MemoryContext cxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
 				bool valid_row = NextCopyFrom(cstate, econtext, sfcstate->myslot->tts_values,
 											  sfcstate->myslot->tts_isnull);
 				CurrentMemoryContext = cxt;
@@ -1049,6 +1045,11 @@ CopyFrom(CopyFromState cstate)
 		cstate->sfcstate->replay_is_active = false;
 		cstate->sfcstate->begin_subxact = true;
 
+		cstate->sfcstate->insertMethod = insertMethod;
+		cstate->sfcstate->singleslot = singleslot;
+		cstate->sfcstate->resultRelInfo = resultRelInfo;
+		cstate->sfcstate->target_resultRelInfo = target_resultRelInfo;
+
 		cstate->sfcstate->oldowner = oldowner;
 		cstate->sfcstate->oldcontext = oldcontext;
 	}
@@ -1061,8 +1062,7 @@ CopyFrom(CopyFromState cstate)
 		if (cstate->sfcstate)
 		{
 			/* If option IGNORE_ERRORS is enabled, COPY skips rows with errors */
-			if (!IgnoreErrors(cstate, estate, econtext, proute, &multiInsertInfo,
-				insertMethod, singleslot, resultRelInfo, target_resultRelInfo))
+			if (!IgnoreErrors(cstate, estate, econtext, proute, &multiInsertInfo))
 				break;
 
 			if (!cstate->sfcstate->replay_is_active)
