@@ -53,8 +53,9 @@ typedef enum CopyInsertMethod
 /* Struct that holding fields for ignore_errors option. */
 typedef struct SafeCopyFromState
 {
-#define			REPLAY_BUFFER_SIZE 10
+#define			REPLAY_BUFFER_SIZE 1000
 	HeapTuple	   *replay_buffer; 			/* accumulates tuples for replaying it after an error */
+	TupleTableSlot *myslot;					/* current slot for saving tuples */
 	int				saved_tuples;			/* # of tuples in replay_buffer */
 	int 			replayed_tuples;		/* # of tuples was replayed from buffer */
 	int				errors;					/* total # of errors */

@@ -106,8 +106,11 @@ static char *limit_printout_length(const char *str);
 
 static void ClosePipeFromProgram(CopyFromState cstate);
 
-static bool safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext,
-							 Datum *values, bool *nulls);
+static bool safeNextCopyFrom(CopyFromState cstate, EState *estate,
+			 				 ExprContext *econtext, PartitionTupleRouting *proute,
+			 			 	 CopyMultiInsertInfo *multiInsertInfo,
+			 			 	 CopyInsertMethod insertMethod, TupleTableSlot *singleslot,
+			 			 	 ResultRelInfo *resultRelInfo, ResultRelInfo *target_resultRelInfo);
 static bool safeExecConstraints(CopyFromState cstate, ResultRelInfo *resultRelInfo, TupleTableSlot *myslot, EState *estate);
 
 static void addToReplayBuffer(CopyFromState cstate, TupleTableSlot *myslot);
@@ -531,7 +534,11 @@ CopyMultiInsertInfoStore(CopyMultiInsertInfo *miinfo, ResultRelInfo *rri,
  * Analog of NextCopyFrom() but ignores rows with errors while copying.
  */
 bool
-safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext, Datum *values, bool *nulls)
+safeNextCopyFrom(CopyFromState cstate, EState *estate,
+			 	 ExprContext *econtext, PartitionTupleRouting *proute,
+			 	 CopyMultiInsertInfo *multiInsertInfo,
+			 	 CopyInsertMethod insertMethod, TupleTableSlot *singleslot,
+			 	 ResultRelInfo *resultRelInfo, ResultRelInfo *target_resultRelInfo)
 {
 	SafeCopyFromState *sfcstate = cstate->sfcstate;
 
@@ -539,6 +546,37 @@ safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext, Datum *values, boo
 
 	PG_TRY();
 	{
+		CHECK_FOR_INTERRUPTS();
+
+		/*
+		 * Reset the per-tuple exprcontext. We do this after every tuple, to
+		 * clean-up after expression evaluations etc.
+		 */
+		ResetPerTupleExprContext(estate);
+
+		/* select slot to (initially) load row into */
+		if (insertMethod == CIM_SINGLE || proute)
+		{
+			sfcstate->myslot = singleslot;
+			Assert(sfcstate->myslot != NULL);
+		}
+		else
+		{
+			Assert(resultRelInfo == target_resultRelInfo);
+			Assert(insertMethod == CIM_MULTI);
+
+			sfcstate->myslot = CopyMultiInsertInfoNextFreeSlot(multiInsertInfo,
+															   resultRelInfo);
+		}
+
+		/*
+		 * Switch to per-tuple context before calling NextCopyFrom, which does
+		 * evaluate default expressions etc. and requires per-tuple context.
+		 */
+		MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
+
+		ExecClearTuple(sfcstate->myslot);
+
 		if (sfcstate->begin_subxact)
 		{
 			BeginInternalSubTransaction(NULL);
@@ -552,8 +590,8 @@ safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext, Datum *values, boo
 			if (sfcstate->saved_tuples < REPLAY_BUFFER_SIZE)
 			{
 				MemoryContext cxt = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
-				bool valid_row = NextCopyFrom(cstate, econtext, values, nulls);
-
+				bool valid_row = NextCopyFrom(cstate, econtext, sfcstate->myslot->tts_values,
+											  sfcstate->myslot->tts_isnull);
 				CurrentMemoryContext = cxt;
 
 				sfcstate->tuple_is_valid = true;
@@ -613,7 +651,8 @@ safeNextCopyFrom(CopyFromState cstate, ExprContext *econtext, Datum *values, boo
 				/* Replaying the tuple */
 				MemoryContext cxt = MemoryContextSwitchTo(sfcstate->replay_cxt);
 
-				heap_deform_tuple(sfcstate->replay_buffer[sfcstate->replayed_tuples++], RelationGetDescr(cstate->rel), values, nulls);
+				heap_deform_tuple(sfcstate->replay_buffer[sfcstate->replayed_tuples++], RelationGetDescr(cstate->rel),
+								  sfcstate->myslot->tts_values, sfcstate->myslot->tts_isnull);
 				MemoryContextSwitchTo(cxt);
 
 				sfcstate->tuple_is_valid = true;
@@ -1100,47 +1139,51 @@ CopyFrom(CopyFromState cstate)
 		TupleTableSlot *myslot;
 		bool		skip_tuple;
 
-		CHECK_FOR_INTERRUPTS();
-
-		/*
-		 * Reset the per-tuple exprcontext. We do this after every tuple, to
-		 * clean-up after expression evaluations etc.
-		 */
-		ResetPerTupleExprContext(estate);
-
-		/* select slot to (initially) load row into */
-		if (insertMethod == CIM_SINGLE || proute)
-		{
-			myslot = singleslot;
-			Assert(myslot != NULL);
-		}
-		else
-		{
-			Assert(resultRelInfo == target_resultRelInfo);
-			Assert(insertMethod == CIM_MULTI);
-
-			myslot = CopyMultiInsertInfoNextFreeSlot(&multiInsertInfo,
-													 resultRelInfo);
-		}
-
-		/*
-		 * Switch to per-tuple context before calling NextCopyFrom, which does
-		 * evaluate default expressions etc. and requires per-tuple context.
-		 */
-		MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
-
-		ExecClearTuple(myslot);
-
 		if (cstate->sfcstate)
 		{
 			/* If option IGNORE_ERRORS is enabled, COPY skips rows with errors */
-			if (!safeNextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull))
+			if (!safeNextCopyFrom(cstate, estate, econtext, proute, &multiInsertInfo,
+				insertMethod, singleslot, resultRelInfo, target_resultRelInfo))
 				break;
-			if (!cstate->sfcstate->tuple_is_valid)
+
+			if (!cstate->sfcstate->replay_is_active)
 				continue;
+
+			myslot = cstate->sfcstate->myslot;
 		}
 		else
 		{
+			CHECK_FOR_INTERRUPTS();
+
+			/*
+			 * Reset the per-tuple exprcontext. We do this after every tuple, to
+			 * clean-up after expression evaluations etc.
+			 */
+			ResetPerTupleExprContext(estate);
+
+			/* select slot to (initially) load row into */
+			if (insertMethod == CIM_SINGLE || proute)
+			{
+				myslot = singleslot;
+				Assert(myslot != NULL);
+			}
+			else
+			{
+				Assert(resultRelInfo == target_resultRelInfo);
+				Assert(insertMethod == CIM_MULTI);
+
+				myslot = CopyMultiInsertInfoNextFreeSlot(&multiInsertInfo,
+														resultRelInfo);
+			}
+
+			/*
+			 * Switch to per-tuple context before calling NextCopyFrom, which does
+			 * evaluate default expressions etc. and requires per-tuple context.
+			 */
+			MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
+
+			ExecClearTuple(myslot);
+
 			/* Directly store the values/nulls array in the slot */
 			if (!NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull))
 				break;
