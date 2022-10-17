@@ -107,7 +107,7 @@ static char *limit_printout_length(const char *str);
 
 static void ClosePipeFromProgram(CopyFromState cstate);
 
-static bool FillReplayBuffer(CopyFromState cstate, ExprContext *econtext,
+static bool SafeCopying(CopyFromState cstate, ExprContext *econtext,
 							 TupleTableSlot *myslot);
 
 /*
@@ -632,7 +632,7 @@ CopyMultiInsertInfoStore(CopyMultiInsertInfo *miinfo, ResultRelInfo *rri,
  * Fills replay_buffer for safe copying, enables by IGNORE_ERRORS option.
  */
 bool
-FillReplayBuffer(CopyFromState cstate, ExprContext *econtext, TupleTableSlot *myslot)
+SafeCopying(CopyFromState cstate, ExprContext *econtext, TupleTableSlot *myslot)
 {
 	SafeCopyFromState  *sfcstate = cstate->sfcstate;
 	bool 				valid_row = true;
@@ -642,9 +642,10 @@ FillReplayBuffer(CopyFromState cstate, ExprContext *econtext, TupleTableSlot *my
 		BeginInternalSubTransaction(NULL);
 		CurrentResourceOwner = sfcstate->oldowner;
 
-		while (sfcstate->saved_tuples < REPLAY_BUFFER_SIZE)
+		while (sfcstate->saved_tuples < REPLAY_BUFFER_SIZE &&
+			   sfcstate->replayBufferedBytes < MAX_REPLAY_BUFFERED_BYTES)
 		{
-			bool tuple_is_valid = false;
+			bool	tuple_is_valid = true;
 
 			PG_TRY();
 			{
@@ -652,17 +653,17 @@ FillReplayBuffer(CopyFromState cstate, ExprContext *econtext, TupleTableSlot *my
 
 				valid_row = NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull);
 
-				if (valid_row)
-					tuple_is_valid = true;
-
 				CurrentMemoryContext = cxt;
 			}
 			PG_CATCH();
 			{
 				MemoryContext ecxt = MemoryContextSwitchTo(sfcstate->oldcontext);
-				ErrorData *errdata = CopyErrorData();
+				ErrorData 	 *errdata = CopyErrorData();
+
+				tuple_is_valid = false;
 
 				Assert(IsSubTransaction());
+
 				RollbackAndReleaseCurrentSubTransaction();
 				CurrentResourceOwner = sfcstate->oldowner;
 
@@ -719,7 +720,10 @@ FillReplayBuffer(CopyFromState cstate, ExprContext *econtext, TupleTableSlot *my
 									errmsg("%s", errdata->context)));
 						break;
 					default:
+						MemoryContextSwitchTo(ecxt);
+
 						PG_RE_THROW();
+
 						break;
 				}
 
@@ -731,20 +735,27 @@ FillReplayBuffer(CopyFromState cstate, ExprContext *econtext, TupleTableSlot *my
 			}
 			PG_END_TRY();
 
+			sfcstate->replayBufferedBytes += cstate->line_buf.len;
+
+			if (!valid_row)
+				tuple_is_valid = false;
+
 			if (tuple_is_valid)
 			{
 				/* Filling replay_buffer in Replay_context */
-				MemoryContext cxt = MemoryContextSwitchTo(sfcstate->replay_cxt);
-				HeapTuple saved_tuple;
+				HeapTuple 	  saved_tuple;
+
+				MemoryContextSwitchTo(sfcstate->replay_cxt);
 
 				saved_tuple = heap_form_tuple(RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
 				sfcstate->replay_buffer[sfcstate->saved_tuples++] = saved_tuple;
-
-				MemoryContextSwitchTo(cxt);
 			}
 
 			MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
+
 			ExecClearTuple(myslot);
+
+			MemoryContextSwitchTo(sfcstate->oldcontext);
 
 			if (!valid_row)
 				break;
@@ -761,26 +772,25 @@ FillReplayBuffer(CopyFromState cstate, ExprContext *econtext, TupleTableSlot *my
 	{
 		if (sfcstate->replayed_tuples < sfcstate->saved_tuples)
 		{
-			/* Replaying the tuple */
-			MemoryContext cxt = MemoryContextSwitchTo(sfcstate->replay_cxt);
+			Assert(sfcstate->saved_tuples > 0);
 
+			/* Replaying the tuple */
 			heap_deform_tuple(sfcstate->replay_buffer[sfcstate->replayed_tuples++], RelationGetDescr(cstate->rel),
 							  myslot->tts_values, myslot->tts_isnull);
-			MemoryContextSwitchTo(cxt);
 		}
 		else
 		{
 			/* All tuples from buffer were replayed, clean it up */
 			MemoryContextReset(sfcstate->replay_cxt);
-			sfcstate->saved_tuples = sfcstate->replayed_tuples = 0;
 
-			sfcstate->replay_buffer = MemoryContextAlloc(cstate->sfcstate->replay_cxt,
-														 REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
+			sfcstate->saved_tuples = sfcstate->replayed_tuples = 0;
+			sfcstate->replayBufferedBytes = 0;
+
 			sfcstate->replay_is_active = false;
 
+			/* Did we reach the end of file? */
 			if (!valid_row)
 			{
-				/* All tuples were replayed */
 				if (sfcstate->errors == 0)
 					ereport(NOTICE,
 							errmsg("%d errors", sfcstate->errors));
@@ -1162,7 +1172,7 @@ CopyFrom(CopyFromState cstate)
 		if (cstate->sfcstate)
 		{
 			/* If option IGNORE_ERRORS is enabled, COPY skips rows with errors */
-			if (!FillReplayBuffer(cstate, econtext, myslot))
+			if (!SafeCopying(cstate, econtext, myslot))
 				break;
 
 			if (!cstate->sfcstate->replay_is_active)
@@ -1887,10 +1897,9 @@ BeginCopyFrom(ParseState *pstate,
 		cstate->sfcstate->replay_cxt = AllocSetContextCreate(oldcontext,
 									   "Replay_context",
 									   ALLOCSET_DEFAULT_SIZES);
-		cstate->sfcstate->replay_buffer = MemoryContextAlloc(cstate->sfcstate->replay_cxt,
-										  REPLAY_BUFFER_SIZE * sizeof(HeapTuple));
 		cstate->sfcstate->saved_tuples = 0;
 		cstate->sfcstate->replayed_tuples = 0;
+		cstate->sfcstate->replayBufferedBytes = 0;
 		cstate->sfcstate->errors = 0;
 		cstate->sfcstate->replay_is_active = false;
 
