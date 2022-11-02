@@ -639,6 +639,11 @@ SafeCopying(CopyFromState cstate, ExprContext *econtext, TupleTableSlot *myslot)
 	SafeCopyFromState  *sfcstate = cstate->sfcstate;
 	bool 				valid_row = true;
 
+	/* Standard COPY if IGNORE_ERRORS is disabled */
+	if (!cstate->sfcstate)
+		/* Directly stores the values/nulls array in the slot */
+		return NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull);
+
 	if (sfcstate->replayed_tuples < sfcstate->saved_tuples)
 	{
 		Assert(sfcstate->saved_tuples > 0);
@@ -1152,16 +1157,9 @@ CopyFrom(CopyFromState cstate)
 
 		ExecClearTuple(myslot);
 
-		if (cstate->sfcstate)
-		{
-			/* If option IGNORE_ERRORS is enabled, COPY skips rows with errors. */
-			if (!SafeCopying(cstate, econtext, myslot))
-				break;
-		}
-		else
-			/* Directly store the values/nulls array in the slot */
-			if (!NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull))
-				break;
+		/* Standard copying with option "safe copying" enabled by IGNORE_ERRORS. */
+		if (!SafeCopying(cstate, econtext, myslot))
+			break;
 
 		ExecStoreVirtualTuple(myslot);
 
