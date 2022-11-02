@@ -54,20 +54,20 @@ typedef enum CopyInsertMethod
 } CopyInsertMethod;
 
 /*
- * Struct that holding fields for ignore_errors option
+ * Struct that holding fields for safe copying option enabled by IGNORE_ERRORS.
  */
 typedef struct SafeCopyFromState
 {
-#define		REPLAY_BUFFER_SIZE	1000
-#define		MAX_REPLAY_BUFFERED_BYTES	65535
+#define		SAFE_BUFFER_SIZE	1000
+#define		MAX_SAFE_BUFFER_BYTES	65535
 
-	HeapTuple	replay_buffer[REPLAY_BUFFER_SIZE]; 	/* accumulates valid tuples */
-	int			saved_tuples;						/* # of tuples in replay_buffer */
-	int 		replayed_tuples;					/* # of tuples was replayed from buffer */
-	int			replayBufferedBytes;				/* # of bytes from all buffered tuples */
-	int			errors;								/* total # of errors */
+	HeapTuple	safe_buffer[SAFE_BUFFER_SIZE]; 	/* accumulates valid tuples */
+	int			saved_tuples;					/* # of tuples in safe_buffer */
+	int 		replayed_tuples;				/* # of tuples were replayed from buffer */
+	int			safeBufferBytes;				/* # of bytes from all buffered tuples */
+	int			errors;							/* total # of errors */
 
-	MemoryContext	replay_cxt;
+	MemoryContext	safe_cxt;
 	MemoryContext	oldcontext;
 	ResourceOwner	oldowner;
 } SafeCopyFromState;

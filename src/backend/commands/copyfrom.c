@@ -649,24 +649,24 @@ SafeCopying(CopyFromState cstate, ExprContext *econtext, TupleTableSlot *myslot)
 		Assert(sfcstate->saved_tuples > 0);
 
 		/* Prepare to replay the tuple */
-		heap_deform_tuple(sfcstate->replay_buffer[sfcstate->replayed_tuples++], RelationGetDescr(cstate->rel),
+		heap_deform_tuple(sfcstate->safe_buffer[sfcstate->replayed_tuples++], RelationGetDescr(cstate->rel),
 						  myslot->tts_values, myslot->tts_isnull);
 		return true;
 	}
 	else
 	{
 		/* All tuples from buffer were replayed, clean it up */
-		MemoryContextReset(sfcstate->replay_cxt);
+		MemoryContextReset(sfcstate->safe_cxt);
 
 		sfcstate->saved_tuples = sfcstate->replayed_tuples = 0;
-		sfcstate->replayBufferedBytes = 0;
+		sfcstate->safeBufferBytes = 0;
 	}
 
 	BeginInternalSubTransaction(NULL);
 	CurrentResourceOwner = sfcstate->oldowner;
 
-	while (sfcstate->saved_tuples < REPLAY_BUFFER_SIZE &&
-		   sfcstate->replayBufferedBytes < MAX_REPLAY_BUFFERED_BYTES)
+	while (sfcstate->saved_tuples < SAFE_BUFFER_SIZE &&
+		   sfcstate->safeBufferBytes < MAX_SAFE_BUFFER_BYTES)
 	{
 		bool	tuple_is_valid = true;
 
@@ -678,7 +678,7 @@ SafeCopying(CopyFromState cstate, ExprContext *econtext, TupleTableSlot *myslot)
 			tuple_is_valid = valid_row;
 
 			if (valid_row)
-				sfcstate->replayBufferedBytes += cstate->line_buf.len;
+				sfcstate->safeBufferBytes += cstate->line_buf.len;
 
 			CurrentMemoryContext = cxt;
 		}
@@ -764,13 +764,13 @@ SafeCopying(CopyFromState cstate, ExprContext *econtext, TupleTableSlot *myslot)
 
 		if (tuple_is_valid)
 		{
-			/* Add tuple to replay_buffer in Replay_context */
+			/* Add tuple to safe_buffer in Safe_context */
 			HeapTuple 	  saved_tuple;
 
-			MemoryContextSwitchTo(sfcstate->replay_cxt);
+			MemoryContextSwitchTo(sfcstate->safe_cxt);
 
 			saved_tuple = heap_form_tuple(RelationGetDescr(cstate->rel), myslot->tts_values, myslot->tts_isnull);
-			sfcstate->replay_buffer[sfcstate->saved_tuples++] = saved_tuple;
+			sfcstate->safe_buffer[sfcstate->saved_tuples++] = saved_tuple;
 		}
 
 		ExecClearTuple(myslot);
@@ -782,10 +782,10 @@ SafeCopying(CopyFromState cstate, ExprContext *econtext, TupleTableSlot *myslot)
 	ReleaseCurrentSubTransaction();
 	CurrentResourceOwner = sfcstate->oldowner;
 
-	/* Prepare to replay the first tuple from replay_buffer */
+	/* Prepare to replay the first tuple from safe_buffer */
 	if (sfcstate->saved_tuples != 0)
 	{
-		heap_deform_tuple(sfcstate->replay_buffer[sfcstate->replayed_tuples++], RelationGetDescr(cstate->rel),
+		heap_deform_tuple(sfcstate->safe_buffer[sfcstate->replayed_tuples++], RelationGetDescr(cstate->rel),
 						  myslot->tts_values, myslot->tts_isnull);
 		return true;
 	}
@@ -1876,12 +1876,12 @@ BeginCopyFrom(ParseState *pstate,
 	{
 		cstate->sfcstate = palloc(sizeof(SafeCopyFromState));
 
-		cstate->sfcstate->replay_cxt = AllocSetContextCreate(oldcontext,
-									   "Replay_context",
-									   ALLOCSET_DEFAULT_SIZES);
+		cstate->sfcstate->safe_cxt = AllocSetContextCreate(oldcontext,
+									 "Safe_context",
+									 ALLOCSET_DEFAULT_SIZES);
 		cstate->sfcstate->saved_tuples = 0;
 		cstate->sfcstate->replayed_tuples = 0;
-		cstate->sfcstate->replayBufferedBytes = 0;
+		cstate->sfcstate->safeBufferBytes = 0;
 		cstate->sfcstate->errors = 0;
 
 		cstate->sfcstate->oldowner = CurrentResourceOwner;
