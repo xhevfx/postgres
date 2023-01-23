@@ -792,6 +792,43 @@ SELECT * FROM check_ign_err;
  8 | {8} | 8
 (2 rows)
 
+-- check all errors in file "copy_ignored_errors.txt"
+SELECT pg_read_file('copy_ignored_errors.txt');
+                        pg_read_file                        
+------------------------------------------------------------
+ COPY check_ign_err, line 2: "2  {2}     2       2"        +
+ COPY check_ign_err, line 3: "3  {3}"                      +
+ COPY check_ign_err, line 4, column n: "a"                 +
+ COPY check_ign_err, line 5, column k: "5555555555"        +
+ COPY check_ign_err, line 6, column n: ""                  +
+ COPY check_ign_err, line 7, column m: "{a, 7}"            +
+ COPY check_ign_err, line 2: "2  {2}     2       2"        +
+ COPY check_ign_err, line 3: "3  {3}"                      +
+ COPY check_ign_err, line 4, column n: "a"                 +
+ COPY check_ign_err, line 5, column k: "5555555555"        +
+ COPY check_ign_err, line 6, column n: ""                  +
+ COPY check_ign_err, line 7, column m: "{a, 7}"            +
+ COPY check_ign_err_view, line 2: "2     {2}     2       2"+
+ COPY check_ign_err_view, line 3: "3     {3}"              +
+ COPY check_ign_err_view, line 4, column n: "a"            +
+ COPY check_ign_err_view, line 5, column k: "5555555555"   +
+ COPY check_ign_err_view, line 6, column n: ""             +
+ COPY check_ign_err_view, line 7, column m: "{a, 7}"       +
+ COPY check_ign_err, line 2: "2  {2}     2       2"        +
+ COPY check_ign_err, line 3: "3  {3}"                      +
+ COPY check_ign_err, line 4, column n: "a"                 +
+ COPY check_ign_err, line 5, column k: "5555555555"        +
+ COPY check_ign_err, line 6, column n: ""                  +
+ COPY check_ign_err, line 7, column m: "{a, 7}"            +
+ COPY check_ign_err, line 2: "2  {2}     2       2"        +
+ COPY check_ign_err, line 3: "3  {3}"                      +
+ COPY check_ign_err, line 4, column n: "a"                 +
+ COPY check_ign_err, line 5, column k: "5555555555"        +
+ COPY check_ign_err, line 6, column n: ""                  +
+ COPY check_ign_err, line 7, column m: "{a, 7}"            +
+ 
+(1 row)
+
 DROP TRIGGER trig_before_part on check_ign_err;
 DROP TABLE trig_test;
 DROP TABLE check_ign_err CASCADE;

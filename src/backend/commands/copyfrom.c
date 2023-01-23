@@ -680,12 +680,13 @@ SafeCopying(CopyFromState cstate, ExprContext *econtext, TupleTableSlot *myslot)
 			if (valid_row)
 				sfcstate->safeBufferBytes += cstate->line_buf.len;
 
-			CurrentMemoryContext = cxt;
+			MemoryContextSwitchTo(cxt);
 		}
 		PG_CATCH();
 		{
 			MemoryContext ecxt = MemoryContextSwitchTo(sfcstate->oldcontext);
 			ErrorData 	 *errdata = CopyErrorData();
+			FILE		 *file, *fd;
 
 			tuple_is_valid = false;
 
@@ -740,17 +741,61 @@ SafeCopying(CopyFromState cstate, ExprContext *econtext, TupleTableSlot *myslot)
 					BeginInternalSubTransaction(NULL);
 					CurrentResourceOwner = sfcstate->oldowner;
 
+					/* Write no more than 100 errors to the terminal */
 					sfcstate->errors++;
 					if (sfcstate->errors <= 100)
 						ereport(WARNING,
 								(errcode(errdata->sqlerrcode),
 								errmsg("%s", errdata->context)));
+
+					/* Add the error to file "copy_ignored_errors.txt" */
+					if ((fd = AllocateFile(FILE_IGNORE_ERRORS, "r")) == NULL)
+						/* File doesn't exist, create new one */
+						file = AllocateFile(FILE_IGNORE_ERRORS ".tmp", "w");
+					else
+					{
+						/* File exists, rename it to ".tmp" file and append the error */
+						(void) durable_rename(FILE_IGNORE_ERRORS, FILE_IGNORE_ERRORS ".tmp", LOG);
+
+						file = AllocateFile(FILE_IGNORE_ERRORS ".tmp", "at");
+					}
+
+					if (file == NULL)
+						goto error;
+
+					if (fwrite(errdata->context, strlen(errdata->context), 1, file) != 1 ||
+						fwrite("\n", sizeof(char), 1, file) != 1)
+						goto error;
+
+					/* Parallel (re)writing into a file haven't happen. */
+					(void) durable_rename(FILE_IGNORE_ERRORS ".tmp", FILE_IGNORE_ERRORS, LOG);
+
+					if (fd && FreeFile(fd) == -1)
+					{
+						fd = NULL;
+						goto error;
+					}
+
+					if (FreeFile(file))
+					{
+						file = NULL;
+						goto error;
+					}
 					break;
+
+				error:
+					ereport(LOG,
+							(errcode_for_file_access(),
+							errmsg("could not write file \"%s\": %m", FILE_IGNORE_ERRORS ".tmp")));
+
+					if (file)
+						FreeFile(file);
+					unlink(FILE_IGNORE_ERRORS ".tmp");
+					break;
+
 				default:
 					MemoryContextSwitchTo(ecxt);
-
 					PG_RE_THROW();
-
 					break;
 			}
 

@@ -576,6 +576,10 @@ a	{4}	4
 8	{8}	8
 \.
 SELECT * FROM check_ign_err;
+
+-- check all errors in file "copy_ignored_errors.txt"
+SELECT pg_read_file('copy_ignored_errors.txt');
+
 DROP TRIGGER trig_before_part on check_ign_err;
 DROP TABLE trig_test;
 DROP TABLE check_ign_err CASCADE;

@@ -60,6 +60,7 @@ typedef struct SafeCopyFromState
 {
 #define		SAFE_BUFFER_SIZE	1000
 #define		MAX_SAFE_BUFFER_BYTES	65535
+#define		FILE_IGNORE_ERRORS	"copy_ignored_errors.txt"
 
 	HeapTuple	safe_buffer[SAFE_BUFFER_SIZE]; 	/* accumulates valid tuples */
 	int			saved_tuples;					/* # of tuples in safe_buffer */
