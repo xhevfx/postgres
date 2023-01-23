@@ -108,7 +108,7 @@ static char *limit_printout_length(const char *str);
 static void ClosePipeFromProgram(CopyFromState cstate);
 
 static bool SafeCopying(CopyFromState cstate, ExprContext *econtext,
-							 TupleTableSlot *myslot);
+						TupleTableSlot *myslot);
 
 /*
  * error context callback for COPY FROM
@@ -633,7 +633,7 @@ CopyMultiInsertInfoStore(CopyMultiInsertInfo *miinfo, ResultRelInfo *rri,
  * Skips some data in the case of failed conversion if data source for
  * a next tuple can be surely read without a danger.
  */
-bool
+static bool
 SafeCopying(CopyFromState cstate, ExprContext *econtext, TupleTableSlot *myslot)
 {
 	SafeCopyFromState  *sfcstate = cstate->sfcstate;
@@ -680,7 +680,7 @@ SafeCopying(CopyFromState cstate, ExprContext *econtext, TupleTableSlot *myslot)
 			if (valid_row)
 				sfcstate->safeBufferBytes += cstate->line_buf.len;
 
-			CurrentMemoryContext = cxt;
+			MemoryContextSwitchTo(cxt);
 		}
 		PG_CATCH();
 		{
@@ -1883,10 +1883,12 @@ BeginCopyFrom(ParseState *pstate,
 	/* Initialize safeCopyFromState for IGNORE_ERRORS option */
 	if (cstate->opts.ignore_errors)
 	{
+		MemoryContextSwitchTo(cstate->copycontext);
+
 		cstate->sfcstate = palloc(sizeof(SafeCopyFromState));
 
 		cstate->sfcstate->safe_cxt = AllocSetContextCreate(oldcontext,
-									 "Safe_context",
+									 "COPY_safe_context",
 									 ALLOCSET_DEFAULT_SIZES);
 		cstate->sfcstate->saved_tuples = 0;
 		cstate->sfcstate->replayed_tuples = 0;
