@@ -670,12 +670,6 @@ COMMIT;
 -- CIM_MULTI case
 CREATE TABLE check_ign_err (n int, m int[], k int);
 COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS WHERE n < 9;
-WARNING:  COPY check_ign_err, line 2: "2	{2}	2	2"
-WARNING:  COPY check_ign_err, line 3: "3	{3}"
-WARNING:  COPY check_ign_err, line 4, column n: "a"
-WARNING:  COPY check_ign_err, line 5, column k: "5555555555"
-WARNING:  COPY check_ign_err, line 6, column n: ""
-WARNING:  COPY check_ign_err, line 7, column m: "{a, 7}"
 WARNING:  Errors: 6
 SELECT * FROM check_ign_err;
  n |  m  | k 
@@ -697,12 +691,6 @@ CREATE FUNCTION fn_trig_before () RETURNS TRIGGER AS '
 CREATE TRIGGER trig_before BEFORE INSERT ON check_ign_err
 FOR EACH ROW EXECUTE PROCEDURE fn_trig_before();
 COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS WHERE n < 9;
-WARNING:  COPY check_ign_err, line 2: "2	{2}	2	2"
-WARNING:  COPY check_ign_err, line 3: "3	{3}"
-WARNING:  COPY check_ign_err, line 4, column n: "a"
-WARNING:  COPY check_ign_err, line 5, column k: "5555555555"
-WARNING:  COPY check_ign_err, line 6, column n: ""
-WARNING:  COPY check_ign_err, line 7, column m: "{a, 7}"
 WARNING:  Errors: 6
 SELECT * FROM check_ign_err;
  n |  m  | k 
@@ -725,12 +713,6 @@ CREATE FUNCTION fn_trig_instead_of () RETURNS TRIGGER AS '
 CREATE TRIGGER trig_instead_of INSTEAD OF INSERT ON check_ign_err_view
 FOR EACH ROW EXECUTE PROCEDURE fn_trig_instead_of();
 COPY check_ign_err_view FROM STDIN WITH IGNORE_ERRORS WHERE n < 9;
-WARNING:  COPY check_ign_err_view, line 2: "2	{2}	2	2"
-WARNING:  COPY check_ign_err_view, line 3: "3	{3}"
-WARNING:  COPY check_ign_err_view, line 4, column n: "a"
-WARNING:  COPY check_ign_err_view, line 5, column k: "5555555555"
-WARNING:  COPY check_ign_err_view, line 6, column n: ""
-WARNING:  COPY check_ign_err_view, line 7, column m: "{a, 7}"
 WARNING:  Errors: 6
 SELECT * FROM trig_test;
  n |  m  | k 
@@ -746,12 +728,6 @@ DROP VIEW check_ign_err_view;
 TRUNCATE check_ign_err;
 COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS
   WHERE n = floor(random()*(1-1+1))+1; /* finds values equal 1 */
-WARNING:  COPY check_ign_err, line 2: "2	{2}	2	2"
-WARNING:  COPY check_ign_err, line 3: "3	{3}"
-WARNING:  COPY check_ign_err, line 4, column n: "a"
-WARNING:  COPY check_ign_err, line 5, column k: "5555555555"
-WARNING:  COPY check_ign_err, line 6, column n: ""
-WARNING:  COPY check_ign_err, line 7, column m: "{a, 7}"
 WARNING:  Errors: 6
 SELECT * FROM check_ign_err;
  n |  m  | k 
@@ -778,12 +754,6 @@ CREATE FUNCTION fn_trig_before_part () RETURNS TRIGGER AS '
 CREATE TRIGGER trig_before_part BEFORE INSERT ON check_ign_err
 FOR EACH ROW EXECUTE PROCEDURE fn_trig_before_part();
 COPY check_ign_err FROM STDIN WITH IGNORE_ERRORS WHERE n < 9;
-WARNING:  COPY check_ign_err, line 2: "2	{2}	2	2"
-WARNING:  COPY check_ign_err, line 3: "3	{3}"
-WARNING:  COPY check_ign_err, line 4, column n: "a"
-WARNING:  COPY check_ign_err, line 5, column k: "5555555555"
-WARNING:  COPY check_ign_err, line 6, column n: ""
-WARNING:  COPY check_ign_err, line 7, column m: "{a, 7}"
 WARNING:  Errors: 6
 SELECT * FROM check_ign_err;
  n |  m  | k 

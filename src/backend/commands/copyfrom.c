@@ -741,16 +741,14 @@ SafeCopying(CopyFromState cstate, ExprContext *econtext, TupleTableSlot *myslot)
 					CurrentResourceOwner = sfcstate->oldowner;
 
 					sfcstate->errors++;
-					if (sfcstate->errors <= 100)
-						ereport(WARNING,
-								(errcode(errdata->sqlerrcode),
-								errmsg("%s", errdata->context)));
+
+					ereport(LOG, (errmsg("%s", errdata->context),
+							errhidecontext(true), errhidestmt(true)));
+
 					break;
 				default:
 					MemoryContextSwitchTo(ecxt);
-
 					PG_RE_THROW();
-
 					break;
 			}
 
@@ -1450,7 +1448,8 @@ CopyFrom(CopyFromState cstate)
 
 	if (cstate->sfcstate && cstate->sfcstate->errors > 0)
 		ereport(WARNING,
-				errmsg("Errors: %d", cstate->sfcstate->errors));
+				errmsg("Errors: %d", cstate->sfcstate->errors),
+				errhidecontext(true), errhidestmt(true));
 
 	/* Flush any remaining buffered tuples */
 	if (insertMethod != CIM_SINGLE)
@@ -1887,7 +1886,7 @@ BeginCopyFrom(ParseState *pstate,
 
 		cstate->sfcstate = palloc(sizeof(SafeCopyFromState));
 
-		cstate->sfcstate->safe_cxt = AllocSetContextCreate(oldcontext,
+		cstate->sfcstate->safe_cxt = AllocSetContextCreate(cstate->copycontext,
 									 "COPY_safe_context",
 									 ALLOCSET_DEFAULT_SIZES);
 		cstate->sfcstate->saved_tuples = 0;
