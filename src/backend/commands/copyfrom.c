@@ -953,6 +953,7 @@ CopyFrom(CopyFromState cstate)
 	{
 		TupleTableSlot *myslot;
 		bool		skip_tuple;
+		ErrorSaveContext escontext = {T_ErrorSaveContext};
 
 		CHECK_FOR_INTERRUPTS();
 
@@ -985,9 +986,19 @@ CopyFrom(CopyFromState cstate)
 
 		ExecClearTuple(myslot);
 
+		if (cstate->opts.ignore_datatype_errors)
+		{
+			escontext.details_wanted = true;
+			cstate->escontext = escontext;
+		}
+
 		/* Directly store the values/nulls array in the slot */
 		if (!NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull))
 			break;
+
+		/* Soft error occured, skip this tuple */
+		if(cstate->escontext.error_occurred)
+			continue;
 
 		ExecStoreVirtualTuple(myslot);
 

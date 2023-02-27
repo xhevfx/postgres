@@ -464,6 +464,18 @@ test1
 SELECT * FROM instead_of_insert_tbl;
 COMMIT;
 
+-- tests for IGNORE_DATATYPE_ERRORS option
+CREATE TABLE check_ign_err (n int, m int[], k int);
+COPY check_ign_err FROM STDIN WITH IGNORE_DATATYPE_ERRORS;
+1	{1}	1
+a	{2}	2
+3	{3}	3333333333
+4	{a, 4}	4
+
+5	{5}	5
+\.
+SELECT * FROM check_ign_err;
+
 -- clean up
 DROP TABLE forcetest;
 DROP TABLE vistest;

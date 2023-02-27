@@ -70,6 +70,7 @@
 #include "libpq/pqformat.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
+#include "nodes/miscnodes.h"
 #include "pgstat.h"
 #include "port/pg_bswap.h"
 #include "utils/builtins.h"
@@ -938,10 +939,17 @@ NextCopyFrom(CopyFromState cstate, ExprContext *econtext,
 
 			cstate->cur_attname = NameStr(att->attname);
 			cstate->cur_attval = string;
-			values[m] = InputFunctionCall(&in_functions[m],
+			if (!InputFunctionCallSafe(&in_functions[m],
 										  string,
 										  typioparams[m],
-										  att->atttypmod);
+										  att->atttypmod,
+										  (Node *) &cstate->escontext,
+										  &values[m]))
+			{
+					ereport(WARNING,
+							  errmsg("%s", cstate->escontext.error_data->message));
+					return true;
+			}
 			if (string != NULL)
 				nulls[m] = false;
 			cstate->cur_attname = NULL;
