@@ -939,17 +939,23 @@ NextCopyFrom(CopyFromState cstate, ExprContext *econtext,
 
 			cstate->cur_attname = NameStr(att->attname);
 			cstate->cur_attval = string;
+
+			/* If IGNORE_DATATYPE_ERRORS is enabled skip rows with datatype errors */
 			if (!InputFunctionCallSafe(&in_functions[m],
-										  string,
-										  typioparams[m],
-										  att->atttypmod,
-										  (Node *) &cstate->escontext,
-										  &values[m]))
+									   string,
+									   typioparams[m],
+									   att->atttypmod,
+									   (Node *) &cstate->escontext,
+									   &values[m]))
 			{
-					ereport(WARNING,
-							  errmsg("%s", cstate->escontext.error_data->message));
-					return true;
+				cstate->ignored_errors++;
+
+				ereport(LOG,
+						errmsg("%s", cstate->escontext.error_data->message));
+
+				return true;
 			}
+
 			if (string != NULL)
 				nulls[m] = false;
 			cstate->cur_attname = NULL;

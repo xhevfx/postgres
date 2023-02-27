@@ -949,6 +949,9 @@ CopyFrom(CopyFromState cstate)
 	errcallback.previous = error_context_stack;
 	error_context_stack = &errcallback;
 
+	if (cstate->opts.ignore_datatype_errors)
+		cstate->ignored_errors = 0;
+
 	for (;;)
 	{
 		TupleTableSlot *myslot;
@@ -994,11 +997,18 @@ CopyFrom(CopyFromState cstate)
 
 		/* Directly store the values/nulls array in the slot */
 		if (!NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull))
+		{
+			if (cstate->opts.ignore_datatype_errors && cstate->ignored_errors > 0)
+				ereport(WARNING, errmsg("Errors: %ld", cstate->ignored_errors));
 			break;
+		}
 
 		/* Soft error occured, skip this tuple */
-		if(cstate->escontext.error_occurred)
+		if (cstate->escontext.error_occurred)
+		{
+			ExecClearTuple(myslot);
 			continue;
+		}
 
 		ExecStoreVirtualTuple(myslot);
 

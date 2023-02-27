@@ -669,10 +669,7 @@ COMMIT;
 -- tests for IGNORE_DATATYPE_ERRORS option
 CREATE TABLE check_ign_err (n int, m int[], k int);
 COPY check_ign_err FROM STDIN WITH IGNORE_DATATYPE_ERRORS;
-WARNING:  invalid input syntax for type integer: "a"
-WARNING:  value "3333333333" is out of range for type integer
-WARNING:  invalid input syntax for type integer: "a"
-WARNING:  invalid input syntax for type integer: ""
+WARNING:  Errors: 4
 SELECT * FROM check_ign_err;
  n |  m  | k 
 ---+-----+---

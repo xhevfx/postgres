@@ -454,7 +454,7 @@ ProcessCopyOptions(ParseState *pstate,
 		{
 			if (ignore_datatype_errors_specified)
 				errorConflictingDefElem(defel, pstate);
-			ignore_datatype_errors_specified= true;
+			ignore_datatype_errors_specified = true;
 			opts_out->ignore_datatype_errors = defGetBoolean(defel);
 		}
 		else if (strcmp(defel->defname, "delimiter") == 0)
