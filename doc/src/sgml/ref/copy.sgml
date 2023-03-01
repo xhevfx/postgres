@@ -205,6 +205,7 @@ COPY { <replaceable class="parameter">table_name</replaceable> [ ( <replaceable 
       Selects the data format to be read or written:
       <literal>text</literal>,
       <literal>csv</literal> (Comma Separated Values),
+      <literal>json</literal>
       or <literal>binary</literal>.
       The default is <literal>text</literal>.
      </para>

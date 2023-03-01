@@ -434,6 +434,8 @@ ProcessCopyOptions(ParseState *pstate,
 				 /* default format */ ;
 			else if (strcmp(fmt, "csv") == 0)
 				opts_out->csv_mode = true;
+			else if (strcmp(fmt, "json") == 0)
+				opts_out->json_mode = true;
 			else if (strcmp(fmt, "binary") == 0)
 				opts_out->binary = true;
 			else
@@ -590,6 +592,15 @@ ProcessCopyOptions(ParseState *pstate,
 			opts_out->escape = opts_out->quote;
 	}
 
+	// CHANGE?
+	if (opts_out->json_mode)
+	{
+		if (!opts_out->quote)
+			opts_out->quote = "\"";
+		if (!opts_out->escape)
+			opts_out->escape = opts_out->quote;
+	}
+
 	/* Only single-byte delimiter strings are supported. */
 	if (strlen(opts_out->delim) != 1)
 		ereport(ERROR,
@@ -702,6 +713,9 @@ ProcessCopyOptions(ParseState *pstate,
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("CSV quote character must not appear in the NULL specification")));
+
+	// JSON FORMAT ERRORS?
+	// if (opts_out->json_mode &&)
 }
 
 /*

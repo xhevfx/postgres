@@ -77,6 +77,7 @@ typedef struct CopyFromStateData
 
 	CopyFormatOptions opts;
 	bool	   *convert_select_flags;	/* per-column CSV/TEXT CS flags */
+	// bool	   *convert_select_flags;	/* per-column CSV/JSON/TEXT CS flags */
 	Node	   *whereClause;	/* WHERE condition (or NULL) */
 
 	/* these are just for error messages, see CopyFromErrorCallback */

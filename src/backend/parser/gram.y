@@ -706,7 +706,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	INNER_P INOUT INPUT_P INSENSITIVE INSERT INSTEAD INT_P INTEGER
 	INTERSECT INTERVAL INTO INVOKER IS ISNULL ISOLATION
 
-	JOIN
+	JOIN JSON
 
 	KEY
 
@@ -3389,6 +3389,10 @@ copy_opt_item:
 			| CSV
 				{
 					$$ = makeDefElem("format", (Node *) makeString("csv"), @1);
+				}
+			| JSON
+				{
+					$$ = makeDefElem("format", (Node *) makeString("json"), @1);
 				}
 			| HEADER_P
 				{
@@ -16839,6 +16843,7 @@ unreserved_keyword:
 			| INSTEAD
 			| INVOKER
 			| ISOLATION
+			| JSON
 			| KEY
 			| LABEL
 			| LANGUAGE
@@ -17403,6 +17408,7 @@ bare_label_keyword:
 			| IS
 			| ISOLATION
 			| JOIN
+			| JSON
 			| KEY
 			| LABEL
 			| LANGUAGE

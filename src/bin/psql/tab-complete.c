@@ -2861,7 +2861,7 @@ psql_completion(const char *text, int start, int end)
 
 	/* Complete COPY <sth> FROM|TO filename WITH (FORMAT */
 	else if (Matches("COPY|\\copy", MatchAny, "FROM|TO", MatchAny, "WITH", "(", "FORMAT"))
-		COMPLETE_WITH("binary", "csv", "text");
+		COMPLETE_WITH("binary", "csv", "json", "text");
 
 	/* Complete COPY <sth> FROM <sth> WITH (<options>) */
 	else if (Matches("COPY|\\copy", MatchAny, "FROM", MatchAny, "WITH", MatchAny))
