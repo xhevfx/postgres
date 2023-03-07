@@ -669,7 +669,7 @@ COMMIT;
 -- tests for IGNORE_DATATYPE_ERRORS option
 CREATE TABLE check_ign_err (n int, m int[], k int);
 COPY check_ign_err FROM STDIN WITH IGNORE_DATATYPE_ERRORS;
-WARNING:  Errors: 4
+WARNING:  Errors were found: 4
 SELECT * FROM check_ign_err;
  n |  m  | k 
 ---+-----+---

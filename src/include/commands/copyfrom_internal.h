@@ -96,7 +96,7 @@ typedef struct CopyFromStateData
 	FmgrInfo   *in_functions;	/* array of input functions for each attrs */
 	Oid		   *typioparams;	/* array of element types for in_functions */
 	ErrorSaveContext escontext; /* soft error trapper during in_functions execution */
-	uint64		ignored_errors;	/* total number of ignored errors */
+	int64		ignored_errors;	/* total number of ignored errors */
 	int		   *defmap;			/* array of default att numbers */
 	ExprState **defexprs;		/* array of default att expressions */
 	bool		volatile_defexprs;	/* is any of defexprs volatile? */

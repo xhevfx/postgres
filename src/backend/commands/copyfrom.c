@@ -999,7 +999,7 @@ CopyFrom(CopyFromState cstate)
 		if (!NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull))
 		{
 			if (cstate->opts.ignore_datatype_errors && cstate->ignored_errors > 0)
-				ereport(WARNING, errmsg("Errors: %ld", cstate->ignored_errors));
+				ereport(WARNING, errmsg("Errors were found: %lld", (long long) cstate->ignored_errors));
 			break;
 		}
 
