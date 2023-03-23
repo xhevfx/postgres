@@ -953,6 +953,7 @@ CopyFrom(CopyFromState cstate)
 	{
 		TupleTableSlot *myslot;
 		bool		skip_tuple;
+		ErrorSaveContext escontext = {T_ErrorSaveContext};
 
 		CHECK_FOR_INTERRUPTS();
 
@@ -985,9 +986,28 @@ CopyFrom(CopyFromState cstate)
 
 		ExecClearTuple(myslot);
 
+		if (cstate->opts.ignore_datatype_errors)
+		{
+			escontext.details_wanted = true;
+			cstate->escontext = escontext;
+		}
+
 		/* Directly store the values/nulls array in the slot */
 		if (!NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull))
+		{
+			if (cstate->opts.ignore_datatype_errors && cstate->ignored_errors > 0)
+				ereport(WARNING,
+						errmsg("%zd rows were skipped due to data type incompatibility",
+							cstate->ignored_errors));
 			break;
+		}
+
+		/* Soft error occured, skip this tuple */
+		if (cstate->escontext.error_occurred)
+		{
+			ExecClearTuple(myslot);
+			continue;
+		}
 
 		ExecStoreVirtualTuple(myslot);
 

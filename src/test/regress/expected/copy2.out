@@ -666,6 +666,21 @@ SELECT * FROM instead_of_insert_tbl;
 (2 rows)
 
 COMMIT;
+-- tests for IGNORE_DATATYPE_ERRORS option
+CREATE TABLE check_ign_err (n int, m int[], k int);
+COPY check_ign_err FROM STDIN WITH IGNORE_DATATYPE_ERRORS;
+WARNING:  invalid input syntax for type integer: "a"
+WARNING:  value "3333333333" is out of range for type integer
+WARNING:  invalid input syntax for type integer: "a"
+WARNING:  invalid input syntax for type integer: ""
+WARNING:  4 rows were skipped due to data type incompatibility
+SELECT * FROM check_ign_err;
+ n |  m  | k 
+---+-----+---
+ 1 | {1} | 1
+ 5 | {5} | 5
+(2 rows)
+
 -- clean up
 DROP TABLE forcetest;
 DROP TABLE vistest;
