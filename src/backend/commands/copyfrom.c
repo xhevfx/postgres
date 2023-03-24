@@ -639,6 +639,7 @@ CopyFrom(CopyFromState cstate)
 	ExprContext *econtext;
 	TupleTableSlot *singleslot = NULL;
 	MemoryContext oldcontext = CurrentMemoryContext;
+	ErrorSaveContext escontext = {T_ErrorSaveContext};
 
 	PartitionTupleRouting *proute = NULL;
 	ErrorContextCallback errcallback;
@@ -949,11 +950,17 @@ CopyFrom(CopyFromState cstate)
 	errcallback.previous = error_context_stack;
 	error_context_stack = &errcallback;
 
+	if (cstate->opts.ignore_datatype_errors)
+	{
+		escontext.details_wanted = true;
+		cstate->escontext = escontext;
+	}
+
 	for (;;)
 	{
 		TupleTableSlot *myslot;
 		bool		skip_tuple;
-		ErrorSaveContext escontext = {T_ErrorSaveContext};
+		// ErrorSaveContext escontext = {T_ErrorSaveContext};
 
 		CHECK_FOR_INTERRUPTS();
 
@@ -986,12 +993,6 @@ CopyFrom(CopyFromState cstate)
 
 		ExecClearTuple(myslot);
 
-		if (cstate->opts.ignore_datatype_errors)
-		{
-			escontext.details_wanted = true;
-			cstate->escontext = escontext;
-		}
-
 		/* Directly store the values/nulls array in the slot */
 		if (!NextCopyFrom(cstate, econtext, myslot->tts_values, myslot->tts_isnull))
 		{
@@ -1002,10 +1003,15 @@ CopyFrom(CopyFromState cstate)
 			break;
 		}
 
+
 		/* Soft error occured, skip this tuple */
 		if (cstate->escontext.error_occurred)
 		{
 			ExecClearTuple(myslot);
+
+			free(escontext.error_data);
+			cstate->escontext = escontext;
+
 			continue;
 		}
 
