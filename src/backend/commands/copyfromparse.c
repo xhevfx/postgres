@@ -966,12 +966,6 @@ NextCopyFrom(CopyFromState cstate, ExprContext *econtext,
 										   &values[m]))
 				{
 					cstate->ignored_errors++;
-
-					 /* Adjust elevel so we don't jump out */
-					cstate->escontext.error_data->elevel = WARNING;
-					/* Despite the name, this won't raise an error if elevel < ERROR */
-					ThrowErrorData(cstate->escontext.error_data);
-
 					return true;
 				}
 

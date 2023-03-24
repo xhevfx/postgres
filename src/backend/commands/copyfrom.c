@@ -960,7 +960,6 @@ CopyFrom(CopyFromState cstate)
 	{
 		TupleTableSlot *myslot;
 		bool		skip_tuple;
-		// ErrorSaveContext escontext = {T_ErrorSaveContext};
 
 		CHECK_FOR_INTERRUPTS();
 
@@ -1007,8 +1006,14 @@ CopyFrom(CopyFromState cstate)
 		/* Soft error occured, skip this tuple */
 		if (cstate->escontext.error_occurred)
 		{
-			ExecClearTuple(myslot);
+			/* Adjust elevel so we don't jump out */
+			cstate->escontext.error_data->elevel = WARNING;
 
+			/* Despite the name, this won't raise an error if elevel < ERROR */
+			ThrowErrorData(cstate->escontext.error_data);
+
+			/* Clear slot and error context */
+			ExecClearTuple(myslot);
 			free(escontext.error_data);
 			cstate->escontext = escontext;
 
