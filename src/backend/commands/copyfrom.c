@@ -952,6 +952,11 @@ CopyFrom(CopyFromState cstate)
 
 	if (cstate->opts.ignore_datatype_errors)
 	{
+		if (cstate->opts.binary)
+			ereport(WARNING,
+					(errcode(ERRCODE_SYNTAX_ERROR),
+					errmsg("cannot specify IGNORE_DATATYPE_ERRORS in BINARY mode")));
+
 		escontext.details_wanted = true;
 		cstate->escontext = escontext;
 	}
@@ -998,7 +1003,7 @@ CopyFrom(CopyFromState cstate)
 			if (cstate->opts.ignore_datatype_errors && cstate->ignored_errors > 0)
 				ereport(WARNING,
 						errmsg("%zd rows were skipped due to data type incompatibility",
-							cstate->ignored_errors));
+								cstate->ignored_errors));
 			break;
 		}
 
