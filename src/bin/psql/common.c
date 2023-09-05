@@ -987,8 +987,9 @@ PrintQueryResult(PGresult *result, bool last,
 			if (last || pset.show_all_results)
 			{
 				cmdstatus = PQcmdStatus(result);
-				if (strncmp(cmdstatus, "INSERT", 6) == 0 ||
-					strncmp(cmdstatus, "UPDATE", 6) == 0 ||
+				if (strncmp(cmdstatus, "EXPLAIN", 7) == 0 ||
+					strncmp(cmdstatus, "INSERT", 6) == 0  ||
+					strncmp(cmdstatus, "UPDATE", 6) == 0  ||
 					strncmp(cmdstatus, "DELETE", 6) == 0)
 					PrintQueryStatus(result, printStatusFout);
 			}
